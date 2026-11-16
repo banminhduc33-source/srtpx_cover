@@ -46,6 +46,13 @@ Thiết lập: **Cài đặt > Lồng tiếng**, dán `sessionid` (đăng nhập
 
 Dòng lệnh: `python -m srtpx_cover.cli video.mp4 phude.srtpx ra.mp4 --dub --voice BV074_streaming [--dub-comments] [--orig-volume 0.3] [--max-speed 3]`
 
+## Khung 9:16 + logo (tự động sau khi xuất)
+Xuất xong, app dựng tiếp video dọc **1080x1920** từ video vừa xuất (bỏ tích ở hộp thoại Xuất, hoặc `--no-vertical` ở dòng lệnh để tắt):
+- **Nền:** bản sao video phóng to phủ kín khung 9:16, làm mờ, hạ độ sáng còn **35%**.
+- **Giữa:** video giữ nguyên tỷ lệ, vừa chiều ngang khung (vị trí theo ảnh mẫu).
+- **Logo GenshinViet.net** (`assets/logo_genshinviet.png`) nằm **dưới video đúng 20px**, căn giữa. Video quá cao không còn chỗ thì bỏ logo.
+- Âm thanh giữ nguyên. Thông số (độ mờ, độ sáng, khoảng cách, cỡ logo...) ở `VerticalOptions` trong `core/vertical.py`.
+
 ## Ô che lớn tự xuống dòng
 Phụ đề thường (hộp thấp) **không** xuống dòng, chữ dài thì co cỡ. Riêng ô che lớn (hộp cao từ 12% chiều cao video trở lên, vd bảng chữ nhiều dòng) mà chữ chỉ có một dòng thì chữ tự xuống dòng theo từ (chữ Hán: giữa các chữ) để dàn đầy hộp; chỉ xuống dòng khi chữ to hơn ít nhất 15%. Chữ đã có dòng sẵn thì giữ nguyên. Ngưỡng chỉnh ở `WRAP_MIN_HEIGHT_RATIO` / `WRAP_MIN_GAIN` trong `core/layout.py`.
 

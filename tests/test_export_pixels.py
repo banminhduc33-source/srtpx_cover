@@ -65,7 +65,7 @@ def _export(size: tuple[int, int], text: bool) -> tuple[Path, Path]:
     chain = _need_tools()
     src = _source(*size)
     out = Path(tempfile.mkdtemp(prefix="srtpx_out_")) / "out.mp4"
-    argv = [str(src), str(SAMPLE), str(out), "--crf", "0", "--preset", "ultrafast"]
+    argv = [str(src), str(SAMPLE), str(out), "--crf", "0", "--preset", "ultrafast", "--no-vertical"]
     for spec in chain:
         argv += ["--font", f"{spec.path}#{spec.face_index}"]
     if not text:
@@ -185,7 +185,7 @@ def test_moving_text_is_smooth_on_ntsc_and_variable_frame_rate_sources(kind, tmp
     sp.write_text("#res 768x576\n\n1\n00:00:00,500 --> 00:00:06,000\nXin chao cac ban\nHom nay troi dep\n"
                   "KF 0.50s: 100 400 100 170\nKF 5.50s: 300 700 300 400\n", encoding="utf-8")
     out = tmp_path / "out.mp4"
-    argv = [str(src), str(sp), str(out), "--crf", "0", "--preset", "ultrafast"]
+    argv = [str(src), str(sp), str(out), "--crf", "0", "--preset", "ultrafast", "--no-vertical"]
     for spec in chain:
         argv += ["--font", f"{spec.path}#{spec.face_index}"]
     assert cli_main(argv) == 0
