@@ -63,7 +63,7 @@ class PreviewModel:
             if not draw_text or not sub.text.strip():
                 continue
             try:
-                choice, plan = plan_text(sub, chain, self.scale, margin, video_size)
+                choice, plan = plan_text(sub, chain)
             except FontError as exc:
                 self.warnings.append(str(exc))
                 continue
@@ -87,7 +87,7 @@ class PreviewModel:
         if not self._chain or not sub.text.strip():
             return
         try:
-            self._plans[row] = plan_text(sub, self._chain, self.scale, self.margin, self.video_size)
+            self._plans[row] = plan_text(sub, self._chain)
         except FontError:
             pass
 

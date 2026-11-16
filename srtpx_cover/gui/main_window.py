@@ -731,8 +731,7 @@ class MainWindow(QMainWindow):
             return
         info = self.video_info
         default = str(Path(self.video_path).with_name(Path(self.video_path).stem + "_che.mp4"))
-        vertical_on = str(self.settings.value("export/vertical", "true")).lower() in ("true", "1")
-        dlg = ExportDialog(info.duration, str(self.settings.value("dirs/export", default)), self, vertical_on)
+        dlg = ExportDialog(info.duration, str(self.settings.value("dirs/export", default)), self)
         if not dlg.exec():
             return
         out = dlg.output_path()
@@ -740,8 +739,6 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Xuất video", "Không được ghi đè lên video gốc. Hãy chọn tên khác.")
             return
         self.settings.setValue("dirs/export", out)
-        vertical = dlg.vertical()
-        self.settings.setValue("export/vertical", vertical)
         a, b = dlg.segment()
         s = self.settings
         opts = ExportOptions(
@@ -773,16 +770,10 @@ class MainWindow(QMainWindow):
                 if mixed is not None:
                     audio_map = f"{1 + len(script.layers)}:a"
                     extra = [*extra, "-i", str(mixed)]
-            stage1 = str(workdir / "che.mp4") if vertical else out
-            cmd = build_command(ffmpeg, self.video_path, script_path, stage1, opts, ffmpeg_major_version(ffmpeg), script.complex,
+            cmd = build_command(ffmpeg, self.video_path, script_path, out, opts, ffmpeg_major_version(ffmpeg), script.complex,
                                  extra, audio_map)
-            status, msg = run_with_progress(self, "Xuất video", "Đang xuất video…" + (" (1/2)" if vertical else ""), cmd,
-                                            opts.segment_seconds(info.duration), stage1)
-            if status == "ok" and vertical:
-                from ..cli import vertical_command
-                cmd2 = vertical_command(ffmpeg, stage1, out, workdir, opts, probe_video(stage1, find_tool("ffprobe")))
-                status, msg = run_with_progress(self, "Xuất video", "Đang dựng khung 9:16… (2/2)", cmd2,
-                                                opts.segment_seconds(info.duration), out)
+            status, msg = run_with_progress(self, "Xuất video", "Đang xuất video…", cmd,
+                                            opts.segment_seconds(info.duration), out)
         except (FfmpegError, FontError, OSError) as exc:
             self._error("Không xuất được video", str(exc))
             return

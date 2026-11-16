@@ -15,8 +15,6 @@ from pathlib import Path
 
 from .core.export import ExportOptions, build_command, build_filter_script, write_textfiles
 from .core.ffmpeg_tools import FfmpegError, ffmpeg_major_version, find_tool, probe_video, run_ffmpeg
-from .core.vertical import (VerticalOptions, build_vertical_command, build_vertical_filter, find_logo, logo_size,
-                            plan_vertical)
 from .core.dub import DubOptions, prepare_dub_audio
 from .core.tts import DEFAULT_VOICE, TtsError, tiktok_synthesizer
 from .core.fonts import FontError, FontSpec, default_font_chain, load_chain, parse_font_path
@@ -58,8 +56,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--voice-volume", type=float, default=1.0, help="Âm lượng giọng đọc, mặc định 1.0")
     p.add_argument("--max-speed", type=float, default=3.0, help="Trần tua nhanh khi giọng dài hơn mốc, mặc định 3.0")
     p.add_argument("--tts-cache", default=str(APP_DIR / ".tts_cache"), help="Thư mục cache giọng từng câu")
-    p.add_argument("--no-vertical", action="store_true",
-                   help="Không dựng khung 9:16 (mặc định: sau khi xuất, dựng thêm nền mờ + logo thành video dọc 1080x1920)")
     p.add_argument("--dump-filter", metavar="FILE", help="Ghi filter script ra file này để kiểm tra rồi thoát")
     return p
 
@@ -71,18 +67,6 @@ def main(argv: list[str] | None = None) -> int:
     except (FfmpegError, FontError, SrtpxError, TtsError) as exc:
         print(f"Lỗi: {exc}", file=sys.stderr)
         return 1
-
-
-def vertical_command(ffmpeg: str, src: str, output: str, workdir: Path, opts: ExportOptions, info) -> list[str]:
-    """Lệnh dựng khung 9:16 từ video đã xuất `src` (ghi filter script vào workdir)."""
-    logo = find_logo()
-    vopts = VerticalOptions(crf=opts.crf, preset=opts.preset, threads=opts.threads, codec=opts.codec)
-    geom = plan_vertical(info.size, logo_size(logo) if logo else None, vopts)
-    if logo is None:
-        print("[cảnh báo] Không thấy assets/logo_genshinviet.png nên không gắn logo.", file=sys.stderr)
-    script = workdir / "vertical.txt"
-    script.write_bytes(build_vertical_filter(geom, vopts).encode("utf-8"))
-    return build_vertical_command(ffmpeg, src, logo, script, output, geom, vopts, ffmpeg_major_version(ffmpeg))
 
 
 def _run(args: argparse.Namespace) -> int:
@@ -131,9 +115,7 @@ def _run(args: argparse.Namespace) -> int:
             if mixed is not None:
                 audio_map = f"{1 + len(script.layers)}:a"
                 extra = [*extra, "-i", str(mixed)]
-        vertical = not args.no_vertical
-        stage1 = str(workdir / "che.mp4") if vertical else args.output
-        cmd = build_command(ffmpeg, args.video, script_path, stage1, opts, ffmpeg_major_version(ffmpeg), script.complex, extra,
+        cmd = build_command(ffmpeg, args.video, script_path, args.output, opts, ffmpeg_major_version(ffmpeg), script.complex, extra,
                             audio_map)
         last = [-1]
 
@@ -144,11 +126,6 @@ def _run(args: argparse.Namespace) -> int:
                 print(f"\rĐang xuất: {pct:3d}%", end="", flush=True)
 
         run_ffmpeg(cmd, opts.segment_seconds(video.duration), show)
-        if vertical:
-            print("\nĐang dựng khung 9:16…")
-            last[0] = -1
-            run_ffmpeg(vertical_command(ffmpeg, stage1, args.output, workdir, opts, probe_video(stage1, ffprobe)),
-                       opts.segment_seconds(video.duration), show)
         print(f"\nXong: {args.output}")
         return 0
     except FfmpegError:
