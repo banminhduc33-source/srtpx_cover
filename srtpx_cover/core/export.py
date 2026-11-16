@@ -36,7 +36,7 @@ from .model import SrtpxDocument, Subtitle
 
 @dataclass(frozen=True)
 class ExportOptions:
-    margin: float = 3.0
+    margin: float = 1.0
     smooth: bool = True             # nội suy mượt (PCHIP) giữa các keyframe; False = tuyến tính như trước
     draw_text: bool = True
     crf: int = 18

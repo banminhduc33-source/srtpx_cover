@@ -56,23 +56,23 @@ def test_integer_edges_do_not_gain_a_pixel_from_float_noise():
 
 def test_margin_added_on_all_sides_in_video_pixels():
     s = fixed(Box(100, 200, 50, 80))
-    pb = pixel_box(s, 1.0, compute_scale((768, 576), (768, 576)), 3, (768, 576))
-    assert pb == PixelBox(97, 47, 203, 83)
+    pb = pixel_box(s, 1.0, compute_scale((768, 576), (768, 576)), 1, (768, 576))
+    assert pb == PixelBox(99, 49, 201, 81)
 
 
 def test_margin_is_not_scaled():
-    # Lề tính theo điểm ảnh video thực: 3px, không bị nhân với scale (=2).
+    # Lề tính theo điểm ảnh video thực: 1px, không bị nhân với scale (=2).
     s = fixed(Box(50, 100, 25, 40))
-    pb = pixel_box(s, 1.0, compute_scale((200, 200), (400, 400)), 3, (400, 400))
-    assert pb == PixelBox(97, 47, 203, 83)
+    pb = pixel_box(s, 1.0, compute_scale((200, 200), (400, 400)), 1, (400, 400))
+    assert pb == PixelBox(99, 49, 201, 81)
 
 
 def test_clamped_inside_frame():
     s = fixed(Box(1, 767, 1, 575))
-    pb = pixel_box(s, 1.0, compute_scale((768, 576), (768, 576)), 3, (768, 576))
+    pb = pixel_box(s, 1.0, compute_scale((768, 576), (768, 576)), 1, (768, 576))
     assert pb == PixelBox(0, 0, 768, 576)
     s2 = fixed(Box(-50, 900, -5, 700))
-    pb2 = pixel_box(s2, 1.0, compute_scale((768, 576), (768, 576)), 3, (768, 576))
+    pb2 = pixel_box(s2, 1.0, compute_scale((768, 576), (768, 576)), 1, (768, 576))
     assert pb2 == PixelBox(0, 0, 768, 576)
 
 
@@ -128,3 +128,10 @@ def test_sample_block_5_keyframes():
     b = interpolate_box(s, 15.8)  # giữa 15.4 và 16.2
     assert b.x1 == pytest.approx(346) and b.x2 == pytest.approx(427.5)
     assert b.y1 == pytest.approx(349.5) and b.y2 == pytest.approx(370)
+
+
+def test_box_never_more_than_2px_bigger_than_measured_text():
+    # Lề bị chặn ở 1px (kể cả khi cài đặt cũ lưu 3px) + làm tròn ra ngoài (<1px) => dư dưới 2px mỗi cạnh.
+    s = fixed(Box(100.4, 200.6, 50.3, 80.7))
+    pb = pixel_box(s, 1.0, compute_scale((768, 576), (768, 576)), 3, (768, 576))
+    assert 100.4 - pb.x1 < 2 and pb.x2 - 200.6 < 2 and 50.3 - pb.y1 < 2 and pb.y2 - 80.7 < 2

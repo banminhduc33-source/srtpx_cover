@@ -39,7 +39,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("video", help="Video gốc")
     p.add_argument("srtpx", help="File .srtpx")
     p.add_argument("output", help="Video đầu ra")
-    p.add_argument("--margin", type=float, default=DEFAULT_MARGIN_PX, help="Lề an toàn (px), mặc định 3")
+    p.add_argument("--margin", type=float, default=DEFAULT_MARGIN_PX, help="Lề an toàn (px, tối đa 1), mặc định 1")
     p.add_argument("--font", action="append", default=[], metavar="FILE[#n]",
                    help="Font trong chuỗi ưu tiên (lặp lại nhiều lần). Mặc định: Bevan -> Arial -> YaHei")
     p.add_argument("--fonts-dir", default=str(APP_DIR / "fonts"), help="Thư mục fonts/ chứa Bevan-Regular.ttf")

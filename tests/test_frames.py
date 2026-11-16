@@ -48,7 +48,7 @@ def test_start_of_video_and_too_short():
 def test_smallest_size_uses_smallest_keyframe_box():
     doc = read_srtpx(SAMPLE).document
     scale = compute_scale(doc.res, (768, 576))
-    # phụ đề 1: KF 242-525 / 29-59 và KF 257-515 / 45-80, lề 3 => rộng nhỏ nhất 258+6, cao nhỏ nhất 30+6
-    assert smallest_pixel_size(doc.subtitles[0], scale, 3, (768, 576)) == (264, 36)
+    # phụ đề 1: KF 242-525 / 29-59 và KF 257-515 / 45-80, lề 1 => rộng nhỏ nhất 258+2, cao nhỏ nhất 30+2
+    assert smallest_pixel_size(doc.subtitles[0], scale, 1, (768, 576)) == (260, 32)
     # phụ đề 2 không có KF
-    assert smallest_pixel_size(doc.subtitles[1], scale, 3, (768, 576)) == (141 + 6, 35 + 6)
+    assert smallest_pixel_size(doc.subtitles[1], scale, 1, (768, 576)) == (141 + 2, 35 + 2)

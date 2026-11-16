@@ -13,7 +13,8 @@ from dataclasses import dataclass
 
 from .model import Box, Subtitle
 
-DEFAULT_MARGIN_PX = 3
+DEFAULT_MARGIN_PX = 1
+MAX_MARGIN_PX = 1.0  # lề tối đa mỗi cạnh; cộng làm tròn ra ngoài (<1px) thì hộp chỉ to hơn chữ gốc dưới 2px
 SCALE_MISMATCH_TOLERANCE = 0.01  # lệch tỷ lệ x/y quá 1% thì cảnh báo
 _EPS = 1e-9  # tránh ceil(875.0000000001) = 876 do sai số số thực
 
@@ -147,6 +148,7 @@ def video_box(
     smooth: bool = False,
 ) -> Box:
     """Hộp theo điểm ảnh video thực (số thực): nội suy -> scale -> cộng lề -> kẹp trong khung hình."""
+    margin = min(max(margin, 0.0), MAX_MARGIN_PX)
     b = interpolate_box(sub, t, smooth)
     w, h = video_size
     return Box(

@@ -38,7 +38,7 @@ def _doc():
     return parse_srtpx(SAMPLE.read_text(encoding="utf-8")).document
 
 
-def _model(video_size=(768, 576), margin=3.0, chain=CHAIN):
+def _model(video_size=(768, 576), margin=1.0, chain=CHAIN):
     return PreviewModel(_doc(), video_size, chain, margin)
 
 
@@ -59,11 +59,11 @@ def test_half_open_boundaries_never_overlap():
 
 def test_box_matches_geometry_function():
     doc = _doc()
-    m = PreviewModel(doc, (768, 576), CHAIN, 3.0)
+    m = PreviewModel(doc, (768, 576), CHAIN, 1.0)
     scale = compute_scale(doc.res, (768, 576))
     for t in (0.3, 0.6, 5.0, 9.4, 10.0, 15.9, 16.2):
         for it in m.items_at(t):
-            assert it.box == pixel_box(doc.subtitles[it.row], t, scale, 3.0, (768, 576))
+            assert it.box == pixel_box(doc.subtitles[it.row], t, scale, 1.0, (768, 576))
 
 
 def test_scales_with_real_video_size():
@@ -118,8 +118,8 @@ def test_scale_mismatch_warning():
 def test_preview_layout_equals_export_layout():
     """Preview và bộ xuất dùng cùng font và cỡ chữ."""
     doc = _doc()
-    m = PreviewModel(doc, VIDEO.size, CHAIN, 3.0)
-    script = build_filter_script(doc, VIDEO, CHAIN, ExportOptions(margin=3.0), Path("/tmp/x"))
+    m = PreviewModel(doc, VIDEO.size, CHAIN, 1.0)
+    script = build_filter_script(doc, VIDEO, CHAIN, ExportOptions(margin=1.0), Path("/tmp/x"))
     texts = set(script.textfiles.values())
     for sub in doc.subtitles:
         t = (sub.start + sub.end) / 2

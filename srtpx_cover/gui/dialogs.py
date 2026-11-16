@@ -71,7 +71,7 @@ class SettingsDialog(QDialog):
         self.settings = settings
         s = settings
 
-        self.margin = QDoubleSpinBox(); self.margin.setRange(0, 50); self.margin.setDecimals(1)
+        self.margin = QDoubleSpinBox(); self.margin.setRange(0, 1); self.margin.setDecimals(1)
         self.margin.setSuffix(" px"); self.margin.setValue(_float(s, "export/margin", DEFAULT_MARGIN_PX))
 
         self.codec = QComboBox(); self.codec.addItems(["libx264", "libx265"])

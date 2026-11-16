@@ -74,13 +74,13 @@ def test_fixed_box_is_single_drawbox_with_frame_aligned_window():
     doc = sample_doc()
     text = build(doc).text
     # phụ đề 2: 9.5s -> 10.2s = khung 285..305; cửa sổ lệch nửa khung
-    assert "x=488:y=99:w=147:h=41:color=black:t=fill:enable='gte(t,9.483333)*lt(t,10.183333)'" in text
+    assert "x=490:y=101:w=143:h=37:color=black:t=fill:enable='gte(t,9.483333)*lt(t,10.183333)'" in text
 
 
 def test_adjacent_blocks_have_touching_but_not_overlapping_windows():
     b = boxes_of(build().text)
-    win2 = next(w for w in b if w[:4] == (488, 99, 147, 41))
-    win3 = next(w for w in b if w[0] == 497)     # phụ đề 3: x1 = 500 - 3
+    win2 = next(w for w in b if w[:4] == (490, 101, 143, 37))
+    win3 = next(w for w in b if w[0] == 499)     # phụ đề 3: x1 = 500 - 1
     assert win2[5] == win3[4]
 
 
@@ -94,7 +94,7 @@ def test_keyframed_boxes_match_geometry_on_every_frame():
         for r in mine:                                    # mỗi khung trong cửa sổ phải khớp hình học
             k0, k1 = round(r[4] * 30 + 0.5), round(r[5] * 30 - 0.5)
             for k in range(k0, k1 + 1):
-                b = pixel_box(sub, k / 30, scale, 3, VIDEO.size)
+                b = pixel_box(sub, k / 30, scale, 1, VIDEO.size)
                 assert (b.x1, b.y1, b.w, b.h) == r[:4]
 
 
@@ -110,7 +110,7 @@ def test_keyframed_windows_are_contiguous():
 def test_scaled_video_halves_the_boxes():
     video = VideoInfo(384, 288, 30, 1, 17.0)
     b = next(r for r in boxes_of(build(video=video).text) if r[4] == pytest.approx(9.483333))
-    exp = pixel_box(sample_doc().subtitles[1], 9.6, compute_scale((768, 576), (384, 288)), 3, (384, 288))
+    exp = pixel_box(sample_doc().subtitles[1], 9.6, compute_scale((768, 576), (384, 288)), 1, (384, 288))
     assert b[:4] == (exp.x1, exp.y1, exp.w, exp.h)
 
 

@@ -22,7 +22,7 @@ from tests.helpers import have_ffmpeg, real_font_chain
 
 SAMPLE = Path(__file__).parent / "data" / "sample.srtpx"
 FPS = 30
-MARGIN = 3
+MARGIN = 1
 BLACK = 16  # Y của màu đen trong yuv420p giới hạn dải
 # Giữa mỗi block, đúng ranh giới hai block liền nhau (284|285 chỉ block 1|2, 305|306 -> 2|3, 335|336 -> 3|4),
 # và ngoài mọi block (0, 8, 357, 400, 487, 509). Khung 487 (16.2333s) là khung đầu tiên sau block 5.
