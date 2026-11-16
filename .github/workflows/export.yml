@@ -1,0 +1,53 @@
+name: srtpx-export
+
+# Chạy khi Apps Script (theo dõi Drive) gửi sự kiện "srtpx-export", hoặc bấm tay trong tab Actions.
+on:
+  repository_dispatch:
+    types: [srtpx-export]
+  workflow_dispatch:
+
+# Mỗi lần chỉ chạy một job; job tới sau xếp hàng chờ (không huỷ job đang xuất).
+concurrency:
+  group: srtpx-export
+  cancel-in-progress: false
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cài ffmpeg, rclone, font
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg rclone fonts-liberation fonts-noto-cjk
+          pip install --quiet "Pillow>=10.1" fonttools==4.55.3
+
+      - name: Lấy font Bevan (nếu chưa có trong fonts/)
+        run: |
+          if [ ! -f fonts/Bevan-Regular.ttf ]; then
+            curl -fsSL -o fonts/Bevan-Regular.ttf \
+              https://raw.githubusercontent.com/google/fonts/main/ofl/bevan/Bevan-Regular.ttf \
+              || echo "::warning::Không tải được Bevan, sẽ dùng font dự phòng. Hãy chép Bevan-Regular.ttf vào fonts/ trong repo."
+          fi
+
+      - name: Cấu hình rclone (Google Drive)
+        env:
+          RCLONE_CONF: ${{ secrets.RCLONE_CONF }}
+        run: |
+          mkdir -p ~/.config/rclone
+          printf '%s\n' "$RCLONE_CONF" > ~/.config/rclone/rclone.conf
+          chmod 600 ~/.config/rclone/rclone.conf
+
+      - name: Xuất video từ thư mục processing/ rồi gửi về Drive
+        env:
+          REMOTE: ${{ vars.DRIVE_REMOTE || 'gd:srtpx' }}
+          EXPORT_ARGS: ${{ vars.EXPORT_ARGS || '' }}
+          # sessionid TikTok lưu ở Settings > Secrets (KHÔNG ghi vào code). Không có secret thì xuất không lồng tiếng.
+          TIKTOK_SESSIONID: ${{ secrets.TIKTOK_SESSIONID }}
+        run: bash ci/process.sh

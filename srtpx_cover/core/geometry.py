@@ -1,0 +1,209 @@
+"""Hình học và nội suy: MỘT nguồn sự thật cho preview và bộ sinh lệnh FFmpeg (không Qt).
+
+Quy ước:
+- Hộp #res có mép là toạ độ liên tục; hộp vẽ phủ các điểm ảnh [x1i, x2i) x [y1i, y2i),
+  tức drawbox x=x1i, y=y1i, w=x2i-x1i, h=y2i-y1i. Lề an toàn bù cho sai số đo.
+- Lề an toàn tính theo điểm ảnh của video THỰC (sau khi scale).
+- Thời gian hiển thị là nửa mở: start <= t < end.
+"""
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass
+
+from .model import Box, Subtitle
+
+DEFAULT_MARGIN_PX = 3
+SCALE_MISMATCH_TOLERANCE = 0.01  # lệch tỷ lệ x/y quá 1% thì cảnh báo
+_EPS = 1e-9  # tránh ceil(875.0000000001) = 876 do sai số số thực
+
+
+@dataclass(frozen=True)
+class Scale:
+    sx: float
+    sy: float
+
+    @property
+    def is_mismatched(self) -> bool:
+        return abs(self.sx / self.sy - 1.0) > SCALE_MISMATCH_TOLERANCE
+
+    def warning(self) -> str | None:
+        if not self.is_mismatched:
+            return None
+        return (
+            f"Tỷ lệ scale ngang ({self.sx:.4f}) và dọc ({self.sy:.4f}) lệch nhau quá 1%. "
+            "Có thể file .srtpx được đo trên video khác tỷ lệ khung hình."
+        )
+
+
+@dataclass(frozen=True)
+class PixelBox:
+    """Hộp nguyên theo điểm ảnh video thực, đã làm tròn: phủ [x1, x2) x [y1, y2)."""
+
+    x1: int
+    y1: int
+    x2: int
+    y2: int
+
+    @property
+    def w(self) -> int:
+        return self.x2 - self.x1
+
+    @property
+    def h(self) -> int:
+        return self.y2 - self.y1
+
+
+def compute_scale(res: tuple[int, int] | None, video_size: tuple[int, int]) -> Scale:
+    """sx = rộng_thực / rộng_#res, sy = cao_thực / cao_#res. Không có #res thì scale = 1."""
+    if res is None:
+        return Scale(1.0, 1.0)
+    return Scale(video_size[0] / res[0], video_size[1] / res[1])
+
+
+def is_visible(sub: Subtitle, t: float) -> bool:
+    """Nửa mở: start <= t < end (hai block liền nhau không bao giờ chồng nhau)."""
+    return sub.start <= t < sub.end
+
+
+def _pchip_slopes(ts: list[float], vs: list[float]) -> list[float]:
+    """Độ dốc tại từng keyframe cho nội suy PCHIP (Fritsch-Carlson): liên tục bậc 1, KHÔNG vọt quá giá trị keyframe."""
+    n = len(ts)
+    h = [ts[i + 1] - ts[i] for i in range(n - 1)]
+    d = [(vs[i + 1] - vs[i]) / h[i] for i in range(n - 1)]
+    if n == 2:
+        return [d[0], d[0]]
+    m = [0.0] * n
+    for i in range(1, n - 1):
+        if d[i - 1] * d[i] > 0:
+            w1, w2 = 2 * h[i] + h[i - 1], h[i] + 2 * h[i - 1]
+            m[i] = (w1 + w2) / (w1 / d[i - 1] + w2 / d[i])
+
+    def end(h0: float, h1: float, d0: float, d1: float) -> float:
+        e = ((2 * h0 + h1) * d0 - h0 * d1) / (h0 + h1)
+        if e * d0 <= 0:
+            return 0.0
+        if d0 * d1 <= 0 and abs(e) > 3 * abs(d0):
+            return 3 * d0
+        return e
+
+    m[0] = end(h[0], h[1], d[0], d[1])
+    m[-1] = end(h[-1], h[-2], d[-1], d[-2])
+    return m
+
+
+def _pchip(ts: list[float], vs: list[float], t: float) -> float:
+    ms = _pchip_slopes(ts, vs)
+    for i in range(len(ts) - 1):
+        if ts[i] <= t <= ts[i + 1]:
+            h = ts[i + 1] - ts[i]
+            u = (t - ts[i]) / h
+            h00, h10 = 2 * u**3 - 3 * u**2 + 1, u**3 - 2 * u**2 + u
+            h01, h11 = -2 * u**3 + 3 * u**2, u**3 - u**2
+            return h00 * vs[i] + h10 * h * ms[i] + h01 * vs[i + 1] + h11 * h * ms[i + 1]
+    return vs[-1]  # pragma: no cover
+
+
+def interpolate_box(sub: Subtitle, t: float, smooth: bool = False) -> Box:
+    """Hộp (toạ độ #res, chưa scale) tại thời điểm t; nội suy từng giá trị x1,x2,y1,y2.
+
+    smooth=False: tuyến tính giữa hai keyframe (tốc độ đổi đột ngột tại keyframe -> chuyển động "giật").
+    smooth=True: PCHIP, tốc độ liên tục qua keyframe, không vọt quá giá trị keyframe (dùng khi xuất video).
+    Ngoài khoảng keyframe đầu/cuối thì giữ giá trị keyframe gần nhất.
+    """
+    kfs = sub.keyframes
+    if not kfs:
+        assert sub.box is not None, "Phụ đề thiếu cả hộp cố định lẫn keyframe"
+        return sub.box
+    if t <= kfs[0].time:
+        return kfs[0].box
+    if t >= kfs[-1].time:
+        return kfs[-1].box
+    if smooth and len(kfs) >= 2:
+        ts = [k.time for k in kfs]
+        return Box(
+            _pchip(ts, [k.box.x1 for k in kfs], t), _pchip(ts, [k.box.x2 for k in kfs], t),
+            _pchip(ts, [k.box.y1 for k in kfs], t), _pchip(ts, [k.box.y2 for k in kfs], t),
+        )
+    for a, b in zip(kfs, kfs[1:]):
+        if a.time <= t <= b.time:
+            f = (t - a.time) / (b.time - a.time)
+            ba, bb = a.box, b.box
+            return Box(
+                ba.x1 + (bb.x1 - ba.x1) * f,
+                ba.x2 + (bb.x2 - ba.x2) * f,
+                ba.y1 + (bb.y1 - ba.y1) * f,
+                ba.y2 + (bb.y2 - ba.y2) * f,
+            )
+    raise AssertionError("không tới được: keyframe đã sắp theo thời gian")  # pragma: no cover
+
+
+def video_box(
+    sub: Subtitle,
+    t: float,
+    scale: Scale,
+    margin: float,
+    video_size: tuple[int, int],
+    smooth: bool = False,
+) -> Box:
+    """Hộp theo điểm ảnh video thực (số thực): nội suy -> scale -> cộng lề -> kẹp trong khung hình."""
+    b = interpolate_box(sub, t, smooth)
+    w, h = video_size
+    return Box(
+        min(max(b.x1 * scale.sx - margin, 0.0), float(w)),
+        min(max(b.x2 * scale.sx + margin, 0.0), float(w)),
+        min(max(b.y1 * scale.sy - margin, 0.0), float(h)),
+        min(max(b.y2 * scale.sy + margin, 0.0), float(h)),
+    )
+
+
+def pixel_box(
+    sub: Subtitle,
+    t: float,
+    scale: Scale,
+    margin: float,
+    video_size: tuple[int, int],
+) -> PixelBox:
+    """Như video_box nhưng làm tròn: x1,y1 xuống; x2,y2 lên (che dư hơn che thiếu)."""
+    b = video_box(sub, t, scale, margin, video_size)
+    return PixelBox(
+        math.floor(b.x1 + _EPS),
+        math.floor(b.y1 + _EPS),
+        math.ceil(b.x2 - _EPS),
+        math.ceil(b.y2 - _EPS),
+    )
+
+
+# ---------------------------------------------------------------- Khung hình (mốc 2)
+
+def frame_time(k: int, fps_num: int, fps_den: int) -> float:
+    """Giờ (giây) của khung hình thứ k (đếm từ 0) với fps = fps_num/fps_den."""
+    return k * fps_den / fps_num
+
+
+def visible_frame_range(sub: Subtitle, fps_num: int, fps_den: int) -> tuple[int, int] | None:
+    """Khoảng chỉ số khung (đầu, cuối, gồm cả hai đầu) mà phụ đề hiển thị; None nếu không khung nào.
+
+    Khung k hiển thị khi start <= giờ(k) < end (nửa mở, khớp is_visible). Sai số số thực 1e-9
+    được bỏ qua để mốc như 10.2s không bị lệch một khung.
+    """
+    def first_at_or_after(t: float) -> int:
+        k = max(0, math.ceil(t * fps_num / fps_den - 1e-6))
+        while k > 0 and frame_time(k - 1, fps_num, fps_den) >= t - 1e-9:
+            k -= 1
+        while frame_time(k, fps_num, fps_den) < t - 1e-9:
+            k += 1
+        return k
+
+    first = first_at_or_after(sub.start)
+    last = first_at_or_after(sub.end) - 1  # khung cuối cùng có giờ < end
+    return (first, last) if last >= first else None
+
+
+def smallest_pixel_size(
+    sub: Subtitle, scale: Scale, margin: float, video_size: tuple[int, int]
+) -> tuple[int, int]:
+    """(rộng, cao) nhỏ nhất của hộp vẽ trong các keyframe (hoặc hộp cố định); dùng để cỡ chữ cố định."""
+    times = [k.time for k in sub.keyframes] or [sub.start]
+    boxes = [pixel_box(sub, t, scale, margin, video_size) for t in times]
+    return min(b.w for b in boxes), min(b.h for b in boxes)

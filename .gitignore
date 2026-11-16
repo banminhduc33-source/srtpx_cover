@@ -1,0 +1,10 @@
+_work/
+.venv/
+__pycache__/
+.env
+*.env
+*.local
+secrets*
+rclone.conf
+tts_cache/
+.tts_cache/

@@ -1,0 +1,139 @@
+"""Xuất video bằng dòng lệnh (mốc 2). Không dùng PySide6.
+
+Ví dụ:
+    python -m srtpx_cover.cli video.mp4 phude.srtpx ra.mp4
+    python -m srtpx_cover.cli video.mp4 phude.srtpx ra.mp4 --font fonts/Bevan-Regular.ttf --font C:/Windows/Fonts/arial.ttf
+"""
+from __future__ import annotations
+
+import argparse
+import os
+import shutil
+import sys
+import tempfile
+from pathlib import Path
+
+from .core.export import ExportOptions, build_command, build_filter_script, write_textfiles
+from .core.ffmpeg_tools import FfmpegError, ffmpeg_major_version, find_tool, probe_video, run_ffmpeg
+from .core.dub import DubOptions, prepare_dub_audio
+from .core.tts import DEFAULT_VOICE, TtsError, tiktok_synthesizer
+from .core.fonts import FontError, FontSpec, default_font_chain, load_chain, parse_font_path
+from .core.geometry import DEFAULT_MARGIN_PX
+from .core.parser import SrtpxError, read_srtpx
+
+APP_DIR = Path(__file__).resolve().parent.parent
+
+
+def _parse_font_arg(s: str) -> FontSpec:
+    """'đường/dẫn.ttc' hoặc 'đường/dẫn.ttc#1' (số sau # là chỉ số face trong file TTC)."""
+    path, sep, idx = s.rpartition("#")
+    if sep and idx.isdigit():
+        return FontSpec(path, int(idx))
+    return FontSpec(s, 0)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(description="Che phụ đề cứng bằng hộp đen chữ trắng theo file .srtpx.")
+    p.add_argument("video", help="Video gốc")
+    p.add_argument("srtpx", help="File .srtpx")
+    p.add_argument("output", help="Video đầu ra")
+    p.add_argument("--margin", type=float, default=DEFAULT_MARGIN_PX, help="Lề an toàn (px), mặc định 3")
+    p.add_argument("--font", action="append", default=[], metavar="FILE[#n]",
+                   help="Font trong chuỗi ưu tiên (lặp lại nhiều lần). Mặc định: Bevan -> Arial -> YaHei")
+    p.add_argument("--fonts-dir", default=str(APP_DIR / "fonts"), help="Thư mục fonts/ chứa Bevan-Regular.ttf")
+    p.add_argument("--crf", type=int, default=18)
+    p.add_argument("--preset", default="veryfast")
+    p.add_argument("--threads", type=int, default=2)
+    p.add_argument("--codec", default="libx264", choices=["libx264", "libx265"])
+    p.add_argument("--start", type=float, default=None, help="Xuất từ giây này (giờ video gốc)")
+    p.add_argument("--end", type=float, default=None, help="Xuất tới giây này")
+    p.add_argument("--no-text", action="store_true", help="Chỉ vẽ hộp đen, không vẽ chữ")
+    p.add_argument("--dub", action="store_true", help="Lồng tiếng TikTok TTS theo mốc phụ đề (cần sessionid)")
+    p.add_argument("--sessionid", default=None, help="sessionid TikTok (mặc định lấy từ biến môi trường TIKTOK_SESSIONID)")
+    p.add_argument("--voice", default=DEFAULT_VOICE, help=f"Mã giọng, mặc định {DEFAULT_VOICE}")
+    p.add_argument("--dub-comments", action="store_true", help="Lồng cả chú thích (có *, trong ngoặc) và block trùng giờ; mặc định bỏ qua")
+    p.add_argument("--orig-volume", type=float, default=0.3, help="Âm lượng âm thanh gốc khi lồng tiếng (0..1), mặc định 0.3")
+    p.add_argument("--voice-volume", type=float, default=1.0, help="Âm lượng giọng đọc, mặc định 1.0")
+    p.add_argument("--max-speed", type=float, default=3.0, help="Trần tua nhanh khi giọng dài hơn mốc, mặc định 3.0")
+    p.add_argument("--tts-cache", default=str(APP_DIR / ".tts_cache"), help="Thư mục cache giọng từng câu")
+    p.add_argument("--dump-filter", metavar="FILE", help="Ghi filter script ra file này để kiểm tra rồi thoát")
+    return p
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        return _run(args)
+    except (FfmpegError, FontError, SrtpxError, TtsError) as exc:
+        print(f"Lỗi: {exc}", file=sys.stderr)
+        return 1
+
+
+def _run(args: argparse.Namespace) -> int:
+    ffmpeg, ffprobe = find_tool("ffmpeg"), find_tool("ffprobe")
+    video = probe_video(args.video, ffprobe)
+    parsed = read_srtpx(args.srtpx)
+    for w in parsed.warnings:
+        print(f"[srtpx] {w}", file=sys.stderr)
+
+    if args.font:
+        specs, font_warnings = [parse_font_path(f) for f in args.font], []
+    else:
+        specs, font_warnings = default_font_chain(Path(args.fonts_dir))
+    for w in font_warnings:
+        print(f"[font] {w}", file=sys.stderr)
+    chain = load_chain(specs)
+
+    opts = ExportOptions(margin=args.margin, draw_text=not args.no_text,
+                         crf=args.crf, preset=args.preset, threads=args.threads,
+                         codec=args.codec, start=args.start, end=args.end)
+    workdir = Path(tempfile.mkdtemp(prefix="srtpx_"))
+    try:
+        script = build_filter_script(parsed.document, video, chain, opts, workdir)
+        for w in script.warnings:
+            print(f"[cảnh báo] {w}", file=sys.stderr)
+        write_textfiles(script)
+        script_path = workdir / "filter.txt"
+        script_path.write_bytes(script.text.encode("utf-8"))
+        if args.dump_filter:
+            Path(args.dump_filter).write_bytes(script.text.encode("utf-8"))
+            print(f"Đã ghi filter script: {args.dump_filter}")
+            return 0
+        extra = script.extra_inputs(video.fps_num, video.fps_den)
+        audio_map = None
+        if args.dub:
+            sid = args.sessionid or os.environ.get("TIKTOK_SESSIONID", "")
+            dub_opts = DubOptions(include_comments=args.dub_comments, max_speed=args.max_speed,
+                                  orig_volume=args.orig_volume, voice_volume=args.voice_volume)
+            print("Đang tạo giọng đọc…")
+            mixed, rep, dub_warnings = prepare_dub_audio(
+                parsed.document, args.video, video.duration, args.voice, tiktok_synthesizer(sid),
+                Path(args.tts_cache), workdir, dub_opts, ffmpeg, ffprobe)
+            for w in dub_warnings:
+                print(f"[lồng tiếng] {w}", file=sys.stderr)
+            print(rep.summary())
+            if mixed is not None:
+                audio_map = f"{1 + len(script.layers)}:a"
+                extra = [*extra, "-i", str(mixed)]
+        cmd = build_command(ffmpeg, args.video, script_path, args.output, opts, ffmpeg_major_version(ffmpeg), script.complex, extra,
+                            audio_map)
+        last = [-1]
+
+        def show(p: float) -> None:
+            pct = int(p * 100)
+            if pct != last[0]:
+                last[0] = pct
+                print(f"\rĐang xuất: {pct:3d}%", end="", flush=True)
+
+        run_ffmpeg(cmd, opts.segment_seconds(video.duration), show)
+        print(f"\nXong: {args.output}")
+        return 0
+    except FfmpegError:
+        Path(args.output).unlink(missing_ok=True)  # xoá file dở
+        raise
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
