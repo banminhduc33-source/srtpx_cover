@@ -46,6 +46,9 @@ Thiết lập: **Cài đặt > Lồng tiếng**, dán `sessionid` (đăng nhập
 
 Dòng lệnh: `python -m srtpx_cover.cli video.mp4 phude.srtpx ra.mp4 --dub --voice BV074_streaming [--dub-comments] [--orig-volume 0.3] [--max-speed 3]`
 
+## Ô che lớn tự xuống dòng
+Phụ đề thường (hộp thấp) **không** xuống dòng, chữ dài thì co cỡ. Riêng ô che lớn (hộp cao từ 12% chiều cao video trở lên, vd bảng chữ nhiều dòng) mà chữ chỉ có một dòng thì chữ tự xuống dòng theo từ (chữ Hán: giữa các chữ) để dàn đầy hộp; chỉ xuống dòng khi chữ to hơn ít nhất 15%. Chữ đã có dòng sẵn thì giữ nguyên. Ngưỡng chỉnh ở `WRAP_MIN_HEIGHT_RATIO` / `WRAP_MIN_GAIN` trong `core/layout.py`.
+
 ## Chữ dính vào hộp
 Chữ luôn co giãn và dời theo hộp đen: hộp phóng to/thu nhỏ/di chuyển theo keyframe thì chữ to/nhỏ/dời theo, mượt (cỡ chữ và vị trí là số thực, không nhảy từng px). Cỡ chữ = min(cao hộp / 1,2 x số dòng, rộng hộp / độ rộng dòng dài nhất).
 
