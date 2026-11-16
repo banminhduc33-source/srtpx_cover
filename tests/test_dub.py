@@ -159,7 +159,7 @@ def test_end_to_end_cli_export_has_dubbed_audio(tmp_path, monkeypatch):
     out = tmp_path / "out.mp4"
     font = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
     args = [str(video), str(DATA), str(out), "--dub", "--sessionid", "x", "--tts-cache", str(tmp_path / "cache"),
-            "--orig-volume", "0", "--no-text"]
+            "--orig-volume", "0", "--no-text", "--no-vertical"]
     if Path(font).exists():
         args += ["--font", font]
     assert cli.main(args) == 0
