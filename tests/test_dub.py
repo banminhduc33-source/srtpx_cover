@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from srtpx_cover.core.dub import (
-    RATE, DubOptions, atempo_filter, is_comment, split_dub_subtitles, build_dub_track, place_clip, prepare_dub_audio, select_dub_subtitles, speed_for,
+    RATE, DubOptions, atempo_filter, drop_overlaps, is_comment, split_dub_subtitles, build_dub_track, place_clip, prepare_dub_audio, select_dub_subtitles, speed_for,
 )
 from srtpx_cover.core.parser import read_srtpx
 from srtpx_cover.core.tts import TtsError, clip_path, ensure_clips, split_text
@@ -61,6 +61,29 @@ def test_overlap_keeps_only_main_block():
     assert [s.index for s in kept] == [1, 4]
     assert [s.index for s in comments] == [3, 5] and [s.index for s in overlaps] == [2]
     assert [s.index for s in select_dub_subtitles(doc, include_comments=True)] == [1, 2, 3, 4, 5]
+
+
+def test_overlap_runs_after_ai_so_dropped_label_does_not_swallow_dialogue():
+    """Nhãn "Người phỏng vấn" hiện 0-7.7s bắt đầu sớm nhất: nếu xử lý trùng giờ trước AI thì nó nuốt hết thoại 0.2-7.5s."""
+    from srtpx_cover.core.model import Box, SrtpxDocument, Subtitle
+    box = Box(0, 10, 0, 10)
+    mk = lambda i, a, b, t: Subtitle(i, a, b, t, box=box)
+    doc = SrtpxDocument(subtitles=[
+        mk(1, 0.0, 7.7, "Người phỏng vấn"), mk(2, 0.2, 1.3, "Cậu bị ép từ chức à?"),
+        mk(3, 1.3, 3.6, "Đúng vậy"), mk(4, 7.8, 9.0, "Lời thoại sau")])
+    # Cách cũ: nhãn là block chính, thoại 2-3 bị nuốt trước khi AI kịp loại nhãn.
+    assert [s.index for s in split_dub_subtitles(doc)[0]] == [1, 4]
+    # Cách mới: lấy hết ứng viên -> AI loại nhãn (#1) -> mới xử lý trùng giờ.
+    cands, _, no_overlaps, _ = split_dub_subtitles(doc, resolve_overlaps=False)
+    assert [s.index for s in cands] == [1, 2, 3, 4] and no_overlaps == []
+    after_ai = [s for s in cands if s.index != 1]
+    kept, overlaps = drop_overlaps(after_ai)
+    assert [s.index for s in kept] == [2, 3, 4] and overlaps == []
+    # Vẫn bỏ block trùng giờ thật sự sau AI; include_comments=True thì không bỏ gì.
+    both = [mk(5, 0.0, 3.0, "Câu chính"), mk(6, 1.0, 2.0, "Câu phụ chồng giờ")]
+    kept, overlaps = drop_overlaps(both)
+    assert [s.index for s in kept] == [5] and [s.index for s in overlaps] == [6]
+    assert drop_overlaps(both, include_comments=True)[1] == []
 
 
 def test_only_bottom_subtitles_are_dubbed_floating_text_is_skipped():

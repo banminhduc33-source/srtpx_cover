@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..core.dub import apply_ai_filter, prepare_dub_audio, select_dub_subtitles
+from ..core.dub import apply_ai_filter, drop_overlaps, prepare_dub_audio, split_dub_subtitles
 from ..core.tts import TtsError, ensure_clips, tiktok_synthesizer
 from ..core.export import ExportOptions, build_command, build_filter_script, write_textfiles
 from ..core.ffmpeg_tools import (
@@ -702,7 +702,7 @@ class MainWindow(QMainWindow):
                 QMessageBox.information(self, "Lồng tiếng", "Chưa có sessionid TikTok. Vào Cài đặt > Lồng tiếng để nhập.")
             return
         opts = dub_options(self.settings)
-        subs = select_dub_subtitles(self.doc, opts.include_comments)
+        subs = split_dub_subtitles(self.doc, opts.include_comments, resolve_overlaps=False)[0]   # trùng giờ xử lý sau AI
         if not subs:
             return
         voice, cache = dub_voice(self.settings), self._dub_cache_dir()
@@ -719,20 +719,21 @@ class MainWindow(QMainWindow):
         def task(progress, cancel):
             # Lọc AI (nếu bật) trước để khỏi tạo giọng cho dòng không cần lồng; kết quả lọc có cache nên rất nhanh từ lần sau.
             ai = apply_ai_filter(subs, doc, opts, classifier, cache, lambda p: progress(0.2 * p), cancel)
-            clips, errors = ensure_clips(ai.kept, voice, cache, synth, lambda p: progress(0.2 + 0.8 * p), cancel)
-            return ai, clips, errors
+            final, _ = drop_overlaps(ai.kept, opts.include_comments)
+            clips, errors = ensure_clips(final, voice, cache, synth, lambda p: progress(0.2 + 0.8 * p), cancel)
+            return ai, final, clips, errors
 
         status, msg, val = run_task_with_progress(
             self, "Tạo giọng đọc", f"Đang lọc và tạo giọng cho {len(subs)} phụ đề…", task)
         if status == "error":
             self._error("Không tạo được giọng đọc", msg)
         elif status == "ok":
-            ai, clips, errors = val
+            ai, final, clips, errors = val
             if ai.warnings or errors:
                 self._show_warnings("Cảnh báo lồng tiếng", [*ai.warnings, *errors])
-            skipped = len(self.doc.subtitles) - len(ai.kept)
+            skipped = len(self.doc.subtitles) - len(final)
             self.statusBar().showMessage(
-                f"Đã có giọng cho {len(clips)}/{len(ai.kept)} phụ đề"
+                f"Đã có giọng cho {len(clips)}/{len(final)} phụ đề"
                 + (f" ({skipped} chú thích/trùng giờ/trống/AI lọc được bỏ qua)" if skipped else ""), 8000)
 
     def export_video(self) -> None:

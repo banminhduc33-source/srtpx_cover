@@ -115,14 +115,15 @@ def select_dub_subtitles(doc: SrtpxDocument, include_comments: bool = False) -> 
     return split_dub_subtitles(doc, include_comments)[0]
 
 
-def split_dub_subtitles(doc: SrtpxDocument, include_comments: bool = False):
+def split_dub_subtitles(doc: SrtpxDocument, include_comments: bool = False, resolve_overlaps: bool = True):
     """(sẽ lồng, chú thích bị bỏ, block trùng giờ bị bỏ, chữ bay lơ lửng bị bỏ).
 
     Chỉ lồng phụ đề nằm ở dưới; chữ ở chỗ khác (giữa/trên khung hình) bỏ qua. Mỗi nhóm trùng giờ giữ block
-    bắt đầu sớm nhất. `include_comments=True` tắt hết các luật bỏ qua này."""
-    kept: list[Subtitle] = []
+    bắt đầu sớm nhất. `include_comments=True` tắt hết các luật bỏ qua này.
+
+    `resolve_overlaps=False`: chưa xử lý trùng giờ, trả về mọi ứng viên (đã sắp theo giờ) để cho AI lọc trước, rồi gọi
+    `drop_overlaps` trên kết quả. Làm vậy thì nhãn/chữ trên màn hình bị AI loại sẽ không nuốt mất câu thoại trùng giờ với nó."""
     comments: list[Subtitle] = []
-    overlaps: list[Subtitle] = []
     floating: list[Subtitle] = []
     cands = []
     for sub in doc.subtitles:
@@ -134,14 +135,25 @@ def split_dub_subtitles(doc: SrtpxDocument, include_comments: bool = False):
             floating.append(sub)
         else:
             cands.append(sub)
+    if not resolve_overlaps:
+        return sorted(cands, key=lambda s: (s.start, -len(s.text), s.index)), comments, [], floating
+    kept, overlaps = drop_overlaps(cands, include_comments)
+    return kept, comments, overlaps, floating
+
+
+def drop_overlaps(subs: Sequence[Subtitle], include_comments: bool = False) -> tuple[list[Subtitle], list[Subtitle]]:
+    """(giữ lại, block trùng giờ bị bỏ): mỗi nhóm trùng giờ chỉ giữ block bắt đầu sớm nhất.
+    `include_comments=True` thì không bỏ block nào."""
+    kept: list[Subtitle] = []
+    overlaps: list[Subtitle] = []
     last_end = float("-inf")
-    for sub in sorted(cands, key=lambda s: (s.start, -len(s.text), s.index)):
+    for sub in sorted(subs, key=lambda s: (s.start, -len(s.text), s.index)):
         if sub.start < last_end - OVERLAP_TOL and not include_comments:
             overlaps.append(sub)
         else:
             kept.append(sub)
             last_end = max(last_end, sub.end)
-    return kept, comments, overlaps, floating
+    return kept, overlaps
 
 
 def apply_ai_filter(
@@ -333,9 +345,11 @@ def prepare_dub_audio(
     def stage(lo: float, hi: float) -> Callable[[float], None]:
         return lambda p: on_progress(lo + (hi - lo) * p) if on_progress else None
 
-    subs, comments, overlaps, floating = split_dub_subtitles(doc, options.include_comments)
+    # Thứ tự: luật cứng (chú thích, vị trí) -> AI lọc -> trùng giờ. Để trùng giờ chạy SAU AI thì chữ/nhãn bị AI loại
+    # không còn nuốt mất câu thoại bắt đầu trong khoảng thời gian của nó.
+    subs, comments, _, floating = split_dub_subtitles(doc, options.include_comments, resolve_overlaps=False)
     ai = apply_ai_filter(subs, doc, options, classifier, cache_dir, stage(0.0, 0.1), cancel)
-    subs = ai.kept
+    subs, overlaps = drop_overlaps(ai.kept, options.include_comments)
     skipped = dict(skipped_comments=[s.index for s in comments], skipped_overlap=[s.index for s in overlaps],
                    skipped_floating=[s.index for s in floating], skipped_ai=[s.index for s in ai.dropped],
                    ai_reasons=dict(ai.reasons))
