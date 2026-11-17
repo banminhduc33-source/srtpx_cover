@@ -137,8 +137,13 @@ def _run(args: argparse.Namespace) -> int:
             for w in dub_warnings:
                 print(f"[lồng tiếng] {w}", file=sys.stderr)
             texts = {s.index: " ".join(s.text.split()) for s in parsed.document.subtitles}
+            spans = {s.index: f"{s.start:.1f}s-{s.end:.1f}s" for s in parsed.document.subtitles}
+            for label, ids in (("chú thích", rep.skipped_comments), ("trùng giờ", rep.skipped_overlap),
+                               ("chữ bay lơ lửng", rep.skipped_floating)):
+                for i in ids:   # luật cứng bỏ dòng nào thì in ra để kiểm tra
+                    print(f"[bỏ qua: {label}] #{i} ({spans.get(i, '?')}) \"{texts.get(i, '')}\"")
             for i in rep.skipped_ai:
-                print(f"[lọc AI] bỏ #{i} \"{texts.get(i, '')}\" — {rep.ai_reasons.get(i) or 'không rõ lý do'}")
+                print(f"[lọc AI] bỏ #{i} ({spans.get(i, '?')}) \"{texts.get(i, '')}\" — {rep.ai_reasons.get(i) or 'không rõ lý do'}")
             print(rep.summary())
             if mixed is not None:
                 audio_map = f"{1 + len(script.layers)}:a"
