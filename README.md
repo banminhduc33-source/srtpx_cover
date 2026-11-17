@@ -42,10 +42,14 @@ Mở file `.srtpx` xong, app tự lọc phụ đề và tạo giọng từng câ
 - **Chú thích** (có dấu `*` `#` `※` `★` ... ở đầu/cuối, kể cả trong ngoặc, hoặc cả câu nằm trong một cặp ngoặc bất kỳ như `(cười)`, `[nhạc]`, `【…】`, `《…》`) **không lồng tiếng**.
 - Các block **trùng giờ** nhau chỉ lồng **một** block chính (block bắt đầu sớm nhất), còn lại bỏ qua. Tích "Lồng cả chú thích và block trùng giờ" trong Cài đặt để tắt các luật này (kể cả luật chỉ lồng phụ đề ở dưới).
 - Âm thanh gốc hạ còn 30% (chỉnh được; đặt 0% để tắt hẳn).
+- **Lọc bằng AI (tùy chọn, mặc định tắt)**: sau các luật trên, các dòng còn lại (đã dịch) được gửi theo lô 40 dòng cho Gemini (`gemini-3.5-flash-lite`) để bỏ những dòng không phải lời nói: tiếng động / cười / cảm thán ("ha ha", "ừm"), lời bài hát, chữ trên màn hình (kêu gọi theo dõi, quảng cáo, tên kênh, nhãn người nói, số tập), chú thích bối cảnh, ký tự rác. **Gemini lỗi tạm thời (429, 5xx, mất mạng, trả lời hỏng) thì tự thử lại đến khi được** (chờ 2s, 4s, 8s... tối đa 30s mỗi lần, bấm Hủy để dừng); key/model sai (HTTP 400/401/403/404) thì dừng và báo lỗi vì thử lại cũng vô ích. Dòng nào model bỏ sót sau vài lần hỏi lại thì vẫn lồng (thà đọc thừa còn hơn mất thoại). Kết quả cache theo từng dòng trong thư mục cache giọng nên mở lại / xuất lại không tốn thêm lượt gọi. Bật "Lồng cả chú thích và block trùng giờ" thì tắt luôn bước lọc AI. Tiêu chí lọc nằm ở `SYSTEM_PROMPT` trong `srtpx_cover/core/dubfilter.py` (sửa xong nhớ tăng `PROMPT_VERSION` để bỏ cache cũ).
+
+Thiết lập lọc AI: **Cài đặt > Lồng tiếng**, tích "Lọc bằng AI", dán API key Gemini (lấy ở https://aistudio.google.com/apikey; hoặc dùng biến môi trường `GEMINI_API_KEY`). Dòng bị AI bỏ được đếm ở thanh trạng thái; dòng lệnh in từng dòng bị bỏ kèm lý do để bạn kiểm tra.
 
 Thiết lập: **Cài đặt > Lồng tiếng**, dán `sessionid` (đăng nhập tiktok.com > F12 > Application > Cookies > `sessionid`; coi như mật khẩu, nên dùng tài khoản phụ; app lưu trong cài đặt của máy bạn). Có thể dùng biến môi trường `TIKTOK_SESSIONID` thay cho ô nhập. Menu có thêm **Tạo giọng đọc…** để tạo lại thủ công. Giọng mặc định `BV074_streaming` (tiếng Việt, chưa kiểm chứng); có thể gõ mã giọng khác. Đây là endpoint nội bộ của TikTok, có thể đổi hoặc ngừng bất cứ lúc nào.
 
 Dòng lệnh: `python -m srtpx_cover.cli video.mp4 phude.srtpx ra.mp4 --dub --voice BV074_streaming [--dub-comments] [--orig-volume 0.3] [--max-speed 3]`
+Thêm lọc AI: `... --dub --ai-filter [--gemini-key KEY] [--gemini-model gemini-3.5-flash-lite]` (key mặc định lấy từ `GEMINI_API_KEY`).
 
 ## Khung 9:16 + logo (tự động sau khi xuất)
 Xuất xong, app dựng tiếp video dọc **1080x1920** từ video vừa xuất (bỏ tích ở hộp thoại Xuất, hoặc `--no-vertical` ở dòng lệnh để tắt):
