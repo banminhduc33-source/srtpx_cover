@@ -240,6 +240,27 @@ def test_gemini_classifier_requires_key():
     assert ei.value.max_tries == 1
 
 
+@pytest.mark.parametrize("pasted", ["AIzaSyABC-def_123\n", "  AIzaSyABC-def_123  ", "AIzaSyABC-def\n_123",
+                                    '"AIzaSyABC-def_123"', "GEMINI_API_KEY=AIzaSyABC-def_123", "AIzaSyABC-def_123\r\n"])
+def test_gemini_classifier_cleans_pasted_key(monkeypatch, pasted):
+    seen = {}
+
+    def fake_post(url, body, key, timeout=60):
+        seen["key"] = key
+        return _reply([{"id": 1, "dub": True}])
+
+    monkeypatch.setattr(dubfilter, "_post_json", fake_post)
+    gemini_classifier(pasted)([{"id": 1, "text": "a", "seconds": 1}], [], [])
+    assert seen["key"] == "AIzaSyABC-def_123"
+
+
+@pytest.mark.parametrize("bad", ["AIzaSy…ABC", "khóa-sai-có-dấu", "AIza$yABC"])
+def test_gemini_classifier_rejects_invalid_key_without_leaking(bad):
+    with pytest.raises(DubFilterError) as ei:
+        gemini_classifier(bad)
+    assert ei.value.max_tries == 1 and bad not in str(ei.value)   # dừng ngay, không in key
+
+
 def test_parse_verdicts_tolerates_junk():
     assert dubfilter._parse_verdicts('[{"id": 1, "dub": true}, {"id": "x", "dub": true}, {"id": 2}, 5]') == {1: (True, "")}
     assert dubfilter._parse_verdicts('{"items": [{"id": 3, "dub": false, "reason": "r"}]}') == {3: (False, "r")}

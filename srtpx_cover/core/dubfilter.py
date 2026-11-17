@@ -135,11 +135,25 @@ def _parse_verdicts(text: str) -> dict[int, tuple[bool, str]]:
     return out
 
 
+def _clean_key(api_key: str) -> str:
+    """Làm sạch key dán từ Secrets/Cài đặt: bỏ mọi khoảng trắng/xuống dòng (kể cả ở giữa), dấu nháy bao quanh
+    và tiền tố 'GEMINI_API_KEY='. Key Gemini chỉ gồm chữ, số, '-' và '_'."""
+    key = "".join((api_key or "").split())
+    if "=" in key:
+        key = key.rsplit("=", 1)[1]
+    return key.strip("\"'`")
+
+
 def gemini_classifier(api_key: str, model: str = DEFAULT_MODEL) -> Classifier:
     """Trả về hàm phân loại dùng Gemini với key và model đã cho."""
-    key = api_key.strip()
+    key = _clean_key(api_key)
     if not key:
         raise DubFilterError("Chưa có API key Gemini. Vào Cài đặt > Lồng tiếng để nhập (hoặc biến môi trường GEMINI_API_KEY).", 1)
+    if not (key.isascii() and all(c.isalnum() or c in "-_" for c in key)):
+        # Không in key ra thông báo. Header HTTP không nhận ký tự lạ nên thử lại cũng vô ích.
+        raise DubFilterError(
+            "API key Gemini có ký tự không hợp lệ (có thể dán nhầm dấu nháy, chữ có dấu hoặc ký tự lạ). "
+            "Hãy tạo lại key rồi dán lại vào Secrets GEMINI_API_KEY (hoặc Cài đặt > Lồng tiếng).", 1)
     url = ENDPOINT.format(model=(model or DEFAULT_MODEL).strip())
 
     def classify(lines: list[dict], before: list[dict], after: list[dict]) -> dict[int, tuple[bool, str]]:
