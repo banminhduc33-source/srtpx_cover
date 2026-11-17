@@ -35,20 +35,14 @@ BACKOFF_START = 2.0             # giây chờ trước lần thử lại đầu 
 BACKOFF_MAX = 30.0              # trần thời gian chờ giữa hai lần thử
 BAD_RESPONSE_TRIES = 5          # trả lời rỗng/JSON hỏng: thử tối đa chừng này lần (có thể lặp mãi nếu bị chặn nội dung)
 MISSING_RETRIES = 2             # model bỏ sót dòng nào thì hỏi lại riêng dòng đó tối đa chừng này lần
-PROMPT_VERSION = "1"            # đổi khi sửa SYSTEM_PROMPT để cache cũ không còn hiệu lực
+PROMPT_VERSION = "2"            # đổi khi sửa SYSTEM_PROMPT để cache cũ không còn hiệu lực
 CACHE_NAME = "ai_filter.json"
 
 # Sửa đoạn này để chỉnh tiêu chí lọc cho hợp thể loại video của bạn (nhớ tăng PROMPT_VERSION).
-SYSTEM_PROMPT = """Bạn lọc phụ đề đã dịch để quyết định dòng nào được ĐỌC THÀNH TIẾNG (lồng tiếng bằng TTS).
-Với mỗi dòng trong "lines", trả về dub=true nếu đó là lời thoại / lời thuyết minh mà người trong video NÓI RA
-(kể cả câu rất ngắn nhưng có nghĩa như "Vâng.", "Không!", "Đi thôi.").
-Trả về dub=false nếu dòng đó KHÔNG phải lời nói, ví dụ:
-- tiếng động, tiếng cười/khóc/thở/ho, cảm thán đơn thuần ("ha ha", "ừm", "ồ", "hừ", "á"), từ tượng thanh ("rầm", "ting");
-- lời bài hát / nhạc nền;
-- chữ hiển thị trên màn hình: tiêu đề, tên kênh/watermark/ID, kêu gọi theo dõi - thích - chia sẻ, quảng cáo,
-  số điện thoại/đường link, bình luận của người xem, nhãn tên người nói, số tập, credit;
-- chú thích bối cảnh dạng chữ (địa điểm, mốc thời gian, "vài năm sau");
-- ký hiệu / số / emoji đơn thuần, chuỗi ký tự vô nghĩa hoặc lỗi nhận dạng chữ.
+SYSTEM_PROMPT = """Đây là phụ đề đã dịch của một video, sẽ được lồng tiếng bằng giọng đọc (TTS).
+Với mỗi dòng trong "lines", hãy tự đánh giá dòng đó có phải là lời người trong video nói ra hay không:
+dub=true nếu nên đọc thành tiếng, dub=false nếu không nên (ví dụ chữ trang trí/tiêu đề trên màn hình, tên kênh,
+nhãn người nói, tiếng động, nhạc, ký tự vô nghĩa...). Dựa vào nội dung và ngữ cảnh để quyết định.
 "context_before" và "context_after" chỉ để hiểu ngữ cảnh, KHÔNG phân loại chúng. "seconds" là thời lượng dòng.
 Nếu phân vân thì chọn dub=true. "reason" nêu lý do thật ngắn (tối đa 8 từ).
 Trả về đúng một phần tử cho mỗi id trong "lines"."""
