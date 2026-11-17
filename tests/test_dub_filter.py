@@ -254,6 +254,20 @@ def test_gemini_classifier_cleans_pasted_key(monkeypatch, pasted):
     assert seen["key"] == "AIzaSyABC-def_123"
 
 
+@pytest.mark.parametrize("pasted", ["AQ.Ab8RN6Jxyz-_abc123\n", '"AQ.Ab8RN6Jxyz-_abc123"',
+                                    "GEMINI_API_KEY=AQ.Ab8RN6Jxyz-_abc123", "  AQ.Ab8RN6Jxyz-_abc123  "])
+def test_gemini_classifier_accepts_new_aq_key_format(monkeypatch, pasted):
+    seen = {}
+
+    def fake_post(url, body, key, timeout=60):
+        seen["key"] = key
+        return _reply([{"id": 1, "dub": True}])
+
+    monkeypatch.setattr(dubfilter, "_post_json", fake_post)
+    gemini_classifier(pasted)([{"id": 1, "text": "a", "seconds": 1}], [], [])
+    assert seen["key"] == "AQ.Ab8RN6Jxyz-_abc123"
+
+
 def test_parse_keys_one_per_line():
     raw = "KEY1\r\n\n  KEY2  \n\"KEY3\"\nKEY1\nbad$key\nkhóa-sai\n"
     assert dubfilter.parse_keys(raw) == ["KEY1", "KEY2", "KEY3"]     # bỏ dòng trống, trùng, sai định dạng

@@ -139,8 +139,9 @@ def _clean_key(raw: str) -> str:
 
 
 def _valid_key(key: str) -> bool:
-    """Key Gemini chỉ gồm chữ, số, '-' và '_' (header HTTP không nhận ký tự lạ)."""
-    return bool(key) and key.isascii() and all(c.isalnum() or c in "-_" for c in key)
+    """Key Gemini chỉ gồm chữ, số, '-', '_' và '.' (header HTTP không nhận ký tự lạ). Key cũ dạng 'AIza...',
+    key mới của Google dạng 'AQ.Ab8...' (có dấu chấm)."""
+    return bool(key) and key.isascii() and all(c.isalnum() or c in "-_." for c in key)
 
 
 def parse_keys(raw: str) -> list[str]:
@@ -168,7 +169,7 @@ def gemini_classifier(api_key: str, model: str = DEFAULT_MODEL) -> Classifier:
     if not keys:
         # Không in key ra thông báo. Thử lại cũng vô ích.
         raise DubFilterError(
-            "Không có API key Gemini hợp lệ (key chỉ gồm chữ, số, '-' và '_'; mỗi key một dòng). "
+            "Không có API key Gemini hợp lệ (key chỉ gồm chữ, số, '-', '_' và '.'; mỗi key một dòng). "
             "Hãy kiểm tra lại Secrets GEMINI_API_KEY (hoặc Cài đặt > Lồng tiếng).", 1)
     url = ENDPOINT.format(model=(model or DEFAULT_MODEL).strip())
     lock = threading.Lock()
