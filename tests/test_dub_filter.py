@@ -78,36 +78,85 @@ def test_filter_only_classifies_new_lines(tmp_path):
     assert [s.index for s in res.kept] == [1, 4, 6]
 
 
-def test_filter_error_defaults_to_dub(tmp_path):
-    subs, cache = sample_subs(), tmp_path / "ai.json"
+def test_filter_retries_transient_errors_until_success(monkeypatch, tmp_path):
+    delays = []
+    monkeypatch.setattr(dubfilter, "_sleep", lambda sec, cancel: delays.append(sec))
+    subs, cache, fake, n = sample_subs(), tmp_path / "ai.json", FakeClassifier(), {"c": 0}
 
-    def boom(lines, before, after):
-        raise DubFilterError("HTTP 500")
+    def flaky(lines, before, after):
+        n["c"] += 1
+        if n["c"] <= 7:
+            raise DubFilterError("HTTP 503")          # lỗi tạm thời: max_tries=None -> thử lại mãi
+        return fake(lines, before, after)
 
-    res = filter_subtitles(subs, subs, boom, cache)
-    assert [s.index for s in res.kept] == [1, 2, 3, 4, 5] and res.dropped == []   # lỗi -> lồng hết
-    assert res.warnings and "HTTP 500" in res.warnings[0]
-    assert not cache.exists() or json.loads(cache.read_text(encoding="utf-8"))["items"] == {}  # lỗi không được cache
+    res = filter_subtitles(subs, subs, flaky, cache)
+    assert n["c"] == 8 and [s.index for s in res.dropped] == [2, 3, 5] and res.warnings == []
+    assert delays == [2, 4, 8, 16, 30, 30, 30]       # chờ tăng dần, có trần 30s
+    assert json.loads(cache.read_text(encoding="utf-8"))["items"]    # có kết quả mới ghi cache
 
 
-def test_filter_missing_verdict_defaults_to_dub():
+def test_filter_permanent_error_raises_without_retry(monkeypatch):
+    monkeypatch.setattr(dubfilter, "_sleep", lambda sec, cancel: pytest.fail("không được chờ/thử lại"))
+    subs, n = sample_subs(), {"c": 0}
+
+    def denied(lines, before, after):
+        n["c"] += 1
+        raise DubFilterError("HTTP 403: API key not valid", max_tries=1)
+
+    with pytest.raises(DubFilterError, match="403"):
+        filter_subtitles(subs, subs, denied)
+    assert n["c"] == 1
+
+
+def test_filter_bad_responses_are_limited(monkeypatch):
+    monkeypatch.setattr(dubfilter, "_sleep", lambda sec, cancel: None)
+    subs, n = sample_subs(), {"c": 0}
+
+    def junk(lines, before, after):
+        n["c"] += 1
+        raise DubFilterError("Gemini trả về rỗng", max_tries=dubfilter.BAD_RESPONSE_TRIES)
+
+    with pytest.raises(DubFilterError):
+        filter_subtitles(subs, subs, junk)
+    assert n["c"] == dubfilter.BAD_RESPONSE_TRIES     # không lặp vô hạn
+
+
+def test_filter_cancel_during_backoff():
+    import threading
+    ev = threading.Event()
     subs = sample_subs()
-    res = filter_subtitles(subs, subs, lambda lines, b, a: {2: (False, "x")})   # chỉ trả lời id 2
-    assert [s.index for s in res.dropped] == [2]
-    assert [s.index for s in res.kept] == [1, 3, 4, 5]
+
+    def down(lines, before, after):
+        ev.set()                                       # người dùng bấm Hủy trong lúc đang lỗi mạng
+        raise DubFilterError("lỗi mạng")
+
+    with pytest.raises(TtsCancelled):                  # _sleep thật: cancel.wait() trả về ngay, không chờ 2s
+        filter_subtitles(subs, subs, down, cancel=ev)
 
 
-def test_filter_stops_after_consecutive_failures(monkeypatch):
-    monkeypatch.setattr(dubfilter, "BATCH_SIZE", 1)
+def test_filter_asks_again_for_missing_lines_then_defaults_to_dub():
     subs, calls = sample_subs(), []
 
-    def boom(lines, before, after):
-        calls.append(lines)
-        raise DubFilterError("key sai")
+    def partial(lines, before, after):
+        calls.append([l["id"] for l in lines])
+        return {2: (False, "x")} if 2 in calls[-1] else {}     # luôn bỏ sót các dòng khác
 
-    res = filter_subtitles(subs, subs, boom)
-    assert len(calls) == dubfilter.MAX_CONSECUTIVE_FAILURES      # không gọi hết 5 lượt
-    assert len(res.kept) == 5 and any("dừng" in w for w in res.warnings)
+    res = filter_subtitles(subs, subs, partial)
+    assert calls == [[1, 2, 3, 4, 5], [1, 3, 4, 5], [1, 3, 4, 5]]       # hỏi lại riêng các dòng bị sót
+    assert [s.index for s in res.dropped] == [2] and [s.index for s in res.kept] == [1, 3, 4, 5]
+    assert res.warnings and "4 phụ đề" in res.warnings[0]
+
+
+def test_filter_missing_lines_recovered_on_second_ask():
+    subs, fake, n = sample_subs(), FakeClassifier(), {"c": 0}
+
+    def once_partial(lines, before, after):
+        n["c"] += 1
+        out = fake(lines, before, after)
+        return {k: v for k, v in out.items() if k != 3} if n["c"] == 1 else out    # lần đầu sót #3
+
+    res = filter_subtitles(subs, subs, once_partial)
+    assert n["c"] == 2 and [s.index for s in res.dropped] == [2, 3, 5] and res.warnings == []
 
 
 def test_filter_batches_with_context(monkeypatch):
@@ -153,38 +202,42 @@ def test_gemini_classifier_request_and_parse(monkeypatch):
     assert [l["id"] for l in sent["lines"]] == [1, 2]
 
 
-def test_gemini_classifier_retries_then_succeeds(monkeypatch):
-    monkeypatch.setattr(dubfilter.time, "sleep", lambda s: None)
-    n = {"c": 0}
+@pytest.mark.parametrize("code,permanent", [(429, False), (500, False), (503, False),
+                                            (400, True), (401, True), (403, True), (404, True)])
+def test_gemini_classifier_classifies_http_errors(monkeypatch, code, permanent):
+    def fail(url, body, key, timeout=60):
+        raise urllib.error.HTTPError(url, code, "x", {}, None)
 
-    def flaky(url, body, key, timeout=60):
-        n["c"] += 1
-        if n["c"] < 3:
-            raise urllib.error.HTTPError(url, 503, "busy", {}, None)
-        return _reply([{"id": 1, "dub": True}])
-
-    monkeypatch.setattr(dubfilter, "_post_json", flaky)
-    assert gemini_classifier("k")([{"id": 1, "text": "a", "seconds": 1}], [], []) == {1: (True, "")}
-    assert n["c"] == 3
-
-
-def test_gemini_classifier_bad_key_fails_fast(monkeypatch):
-    monkeypatch.setattr(dubfilter.time, "sleep", lambda s: pytest.fail("không được thử lại khi 400/403"))
-    n = {"c": 0}
-
-    def denied(url, body, key, timeout=60):
-        n["c"] += 1
-        raise urllib.error.HTTPError(url, 403, "Forbidden", {}, None)
-
-    monkeypatch.setattr(dubfilter, "_post_json", denied)
-    with pytest.raises(DubFilterError):
+    monkeypatch.setattr(dubfilter, "_post_json", fail)
+    with pytest.raises(DubFilterError) as ei:
         gemini_classifier("k")([{"id": 1, "text": "a", "seconds": 1}], [], [])
-    assert n["c"] == 1
+    assert ei.value.max_tries == (1 if permanent else None)     # vĩnh viễn: dừng; còn lại: thử lại mãi
+
+
+def test_gemini_classifier_network_error_is_retryable(monkeypatch):
+    def down(url, body, key, timeout=60):
+        raise urllib.error.URLError("không có mạng")
+
+    monkeypatch.setattr(dubfilter, "_post_json", down)
+    with pytest.raises(DubFilterError) as ei:
+        gemini_classifier("k")([{"id": 1, "text": "a", "seconds": 1}], [], [])
+    assert ei.value.max_tries is None
+
+
+def test_gemini_classifier_non_json_body_is_limited(monkeypatch):
+    def html(url, body, key, timeout=60):
+        raise ValueError("Expecting value")
+
+    monkeypatch.setattr(dubfilter, "_post_json", html)
+    with pytest.raises(DubFilterError) as ei:
+        gemini_classifier("k")([{"id": 1, "text": "a", "seconds": 1}], [], [])
+    assert ei.value.max_tries == dubfilter.BAD_RESPONSE_TRIES
 
 
 def test_gemini_classifier_requires_key():
-    with pytest.raises(DubFilterError):
+    with pytest.raises(DubFilterError) as ei:
         gemini_classifier("   ")
+    assert ei.value.max_tries == 1
 
 
 def test_parse_verdicts_tolerates_junk():

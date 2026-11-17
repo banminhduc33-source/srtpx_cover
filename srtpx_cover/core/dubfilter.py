@@ -3,13 +3,16 @@
 Chạy SAU các luật cứng của dub.py (chú thích, vị trí, trùng giờ): đưa các dòng còn lại (đã dịch) cho
 Gemini Flash-Lite phân loại "đọc thành tiếng" hay "bỏ qua" (tiếng động, cảm thán, chữ trên màn hình, quảng cáo...).
 
-Nguyên tắc an toàn: LỖI hay không chắc thì LỒNG TIẾNG (thà đọc thừa còn hơn mất thoại). Kết quả cache theo
-từng dòng (chữ + model + phiên bản prompt) nên chạy lại / sửa một câu không tốn thêm lượt gọi.
+Gemini lỗi tạm thời (429, 5xx, mất mạng, trả lời hỏng) thì THỬ LẠI đến khi được (chờ tăng dần, bấm Hủy để dừng);
+lỗi vĩnh viễn (key/model sai) thì dừng và báo lỗi vì thử lại cũng vô ích. Chỉ khi model trả lời sót một dòng sau vài
+lần hỏi lại thì dòng đó mới mặc định LỒNG TIẾNG (thà đọc thừa còn hơn mất thoại). Kết quả cache theo từng dòng
+(chữ + model + phiên bản prompt) nên chạy lại / sửa một câu không tốn thêm lượt gọi.
 """
 from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import threading
 import time
 import urllib.error
@@ -19,14 +22,18 @@ from pathlib import Path
 from typing import Callable, Sequence
 
 from .model import Subtitle
-from .tts import TtsCancelled
+from .tts import TtsCancelled, TtsError
+
+log = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "gemini-3.5-flash-lite"
 ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 BATCH_SIZE = 40                 # số dòng cần phân loại mỗi lượt gọi
 CONTEXT_LINES = 3               # số dòng trước/sau lô đưa kèm để model hiểu tình huống
-MAX_CONSECUTIVE_FAILURES = 2    # lỗi liên tiếp quá số này thì thôi gọi nữa (key sai/hết hạn mức): phần còn lại mặc định lồng
-RETRIES = 3                     # thử lại khi 429 / 5xx / lỗi mạng
+BACKOFF_START = 2.0             # giây chờ trước lần thử lại đầu tiên, nhân đôi mỗi lần
+BACKOFF_MAX = 30.0              # trần thời gian chờ giữa hai lần thử
+BAD_RESPONSE_TRIES = 5          # trả lời rỗng/JSON hỏng: thử tối đa chừng này lần (có thể lặp mãi nếu bị chặn nội dung)
+MISSING_RETRIES = 2             # model bỏ sót dòng nào thì hỏi lại riêng dòng đó tối đa chừng này lần
 PROMPT_VERSION = "1"            # đổi khi sửa SYSTEM_PROMPT để cache cũ không còn hiệu lực
 CACHE_NAME = "ai_filter.json"
 
@@ -62,8 +69,16 @@ RESPONSE_SCHEMA = {
 Classifier = Callable[[list[dict], list[dict], list[dict]], dict[int, tuple[bool, str]]]
 
 
-class DubFilterError(Exception):
-    """Lỗi gọi Gemini. Thông báo bằng tiếng Việt."""
+class DubFilterError(TtsError):
+    """Lỗi gọi Gemini. Thông báo bằng tiếng Việt.
+
+    `max_tries`: None = lỗi tạm thời, thử lại mãi (chờ tăng dần) đến khi được; một số = chỉ thử tối đa chừng đó lần
+    rồi ném lỗi ra (1 = lỗi vĩnh viễn như key/model sai).
+    """
+
+    def __init__(self, message: str, max_tries: int | None = None) -> None:
+        super().__init__(message)
+        self.max_tries = max_tries
 
 
 @dataclass
@@ -98,11 +113,11 @@ def _response_text(j: dict) -> str:
     cands = j.get("candidates") or []
     if not cands:
         fb = (j.get("promptFeedback") or {}).get("blockReason")
-        raise DubFilterError(f"Gemini không trả về kết quả{f' (bị chặn: {fb})' if fb else ''}")
+        raise DubFilterError(f"Gemini không trả về kết quả{f' (bị chặn: {fb})' if fb else ''}", BAD_RESPONSE_TRIES)
     parts = (cands[0].get("content") or {}).get("parts") or []
     text = "".join(p.get("text", "") for p in parts if isinstance(p, dict))
     if not text.strip():
-        raise DubFilterError(f"Gemini trả về rỗng (finishReason={cands[0].get('finishReason')})")
+        raise DubFilterError(f"Gemini trả về rỗng (finishReason={cands[0].get('finishReason')})", BAD_RESPONSE_TRIES)
     return text
 
 
@@ -110,7 +125,7 @@ def _parse_verdicts(text: str) -> dict[int, tuple[bool, str]]:
     try:
         data = json.loads(text)
     except ValueError as exc:
-        raise DubFilterError(f"Gemini trả về JSON hỏng: {exc}") from exc
+        raise DubFilterError(f"Gemini trả về JSON hỏng: {exc}", BAD_RESPONSE_TRIES) from exc
     if isinstance(data, dict):  # phòng khi model bọc mảng trong một khóa
         data = next((v for v in data.values() if isinstance(v, list)), [])
     out: dict[int, tuple[bool, str]] = {}
@@ -124,7 +139,7 @@ def gemini_classifier(api_key: str, model: str = DEFAULT_MODEL) -> Classifier:
     """Trả về hàm phân loại dùng Gemini với key và model đã cho."""
     key = api_key.strip()
     if not key:
-        raise DubFilterError("Chưa có API key Gemini. Vào Cài đặt > Lồng tiếng để nhập (hoặc biến môi trường GEMINI_API_KEY).")
+        raise DubFilterError("Chưa có API key Gemini. Vào Cài đặt > Lồng tiếng để nhập (hoặc biến môi trường GEMINI_API_KEY).", 1)
     url = ENDPOINT.format(model=(model or DEFAULT_MODEL).strip())
 
     def classify(lines: list[dict], before: list[dict], after: list[dict]) -> dict[int, tuple[bool, str]]:
@@ -134,21 +149,16 @@ def gemini_classifier(api_key: str, model: str = DEFAULT_MODEL) -> Classifier:
                 {"context_before": before, "lines": lines, "context_after": after}, ensure_ascii=False)}]}],
             "generationConfig": {"responseMimeType": "application/json", "responseSchema": RESPONSE_SCHEMA},
         }
-        last = "không rõ"
-        for attempt in range(RETRIES):
-            try:
-                return _parse_verdicts(_response_text(_post_json(url, body, key)))
-            except urllib.error.HTTPError as exc:
-                last = f"HTTP {exc.code}: {_http_message(exc)}"
-                if exc.code not in (429, 500, 502, 503, 504):
-                    raise DubFilterError(last) from exc  # key sai / model sai / yêu cầu sai: thử lại cũng vô ích
-            except (urllib.error.URLError, TimeoutError, OSError) as exc:
-                last = f"lỗi mạng: {exc}"
-            except DubFilterError as exc:
-                last = str(exc)
-            if attempt + 1 < RETRIES:
-                time.sleep(2.0 * (attempt + 1))
-        raise DubFilterError(last)
+        try:
+            return _parse_verdicts(_response_text(_post_json(url, body, key)))
+        except urllib.error.HTTPError as exc:
+            # 400/401/403/404: key sai, model sai, yêu cầu sai... thử lại cũng vô ích. 429/5xx: tạm thời, thử lại mãi.
+            permanent = exc.code in (400, 401, 403, 404)
+            raise DubFilterError(f"HTTP {exc.code}: {_http_message(exc)}", 1 if permanent else None) from exc
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            raise DubFilterError(f"lỗi mạng: {exc}") from exc
+        except ValueError as exc:   # HTTP 200 nhưng thân không phải JSON
+            raise DubFilterError(f"Gemini trả về dữ liệu hỏng: {exc}", BAD_RESPONSE_TRIES) from exc
 
     return classify
 
@@ -182,6 +192,32 @@ def _save_cache(path: Path, items: dict[str, dict]) -> None:
         pass  # cache hỏng/không ghi được thì chỉ tốn thêm lượt gọi, không làm hỏng kết quả
 
 
+# ---------------------------------------------------------------- thử lại
+
+def _sleep(seconds: float, cancel: threading.Event | None) -> None:
+    """Chờ `seconds` giây; bấm Hủy thì dừng ngay."""
+    if cancel is None:
+        time.sleep(seconds)
+    elif cancel.wait(seconds):
+        raise TtsCancelled("Đã hủy lọc phụ đề.")
+
+
+def _classify_with_retry(classifier: Classifier, lines: list[dict], before: list[dict], after: list[dict],
+                         cancel: threading.Event | None) -> dict[int, tuple[bool, str]]:
+    """Gọi classifier, lỗi tạm thời thì chờ (2s, 4s, 8s... tối đa 30s) rồi gọi lại đến khi được."""
+    tries = 0
+    while True:
+        try:
+            return classifier(lines, before, after)
+        except DubFilterError as exc:
+            tries += 1
+            if exc.max_tries is not None and tries >= exc.max_tries:
+                raise
+            delay = min(BACKOFF_START * 2 ** min(tries - 1, 10), BACKOFF_MAX)
+            log.warning("Gemini lỗi (%s), thử lại sau %.0fs (lần %d)", exc, delay, tries)
+            _sleep(delay, cancel)
+
+
 # ---------------------------------------------------------------- lọc
 
 def filter_subtitles(
@@ -195,8 +231,8 @@ def filter_subtitles(
 ) -> FilterResult:
     """Chia `subs` thành (giữ lại để lồng, bỏ qua). `context` là toàn bộ phụ đề của file, chỉ để làm ngữ cảnh.
 
-    Lỗi API không ném ra: lô đó (và phần còn lại nếu lỗi liên tiếp) mặc định được LỒNG, kèm cảnh báo.
-    Chỉ ném TtsCancelled khi người dùng bấm Hủy.
+    Lỗi tạm thời của Gemini được thử lại đến khi được. Ném DubFilterError nếu lỗi vĩnh viễn (key/model sai) hoặc
+    Gemini cứ trả lời hỏng; ném TtsCancelled khi người dùng bấm Hủy. Dòng nào model bỏ sót mãi thì mặc định LỒNG.
     """
     res = FilterResult()
     cache = _load_cache(cache_file) if cache_file else {}
@@ -215,31 +251,25 @@ def filter_subtitles(
     def ctx(s: Subtitle) -> dict:
         return {"id": s.index, "text": _clean(s.text)}
 
-    streak = 0
-    gave_up = False
     for b in range(0, len(todo), BATCH_SIZE):
         if cancel is not None and cancel.is_set():
             raise TtsCancelled("Đã hủy lọc phụ đề.")
         batch = todo[b:b + BATCH_SIZE]
-        if gave_up:
-            break
         ids = {s.index for s in batch}
         first = min((pos[s.index] for s in batch if s.index in pos), default=0)
         last = max((pos[s.index] for s in batch if s.index in pos), default=-1)
         before = [ctx(s) for s in ordered[max(0, first - CONTEXT_LINES):first] if s.index not in ids]
         after = [ctx(s) for s in ordered[last + 1:last + 1 + CONTEXT_LINES] if s.index not in ids]
         lines = [{"id": s.index, "text": _clean(s.text), "seconds": round(max(0.0, s.end - s.start), 2)} for s in batch]
-        try:
-            got = classifier(lines, before, after)
-            streak = 0
-        except DubFilterError as exc:
-            streak += 1
-            res.warnings.append(f"Lọc AI lỗi ở {len(batch)} phụ đề (từ #{batch[0].index}), mặc định vẫn lồng tiếng: {exc}")
-            if streak >= MAX_CONSECUTIVE_FAILURES:
-                res.warnings.append("Lọc AI lỗi liên tiếp nên dừng; các phụ đề còn lại mặc định vẫn lồng tiếng "
-                                    "(kiểm tra API key / hạn mức Gemini).")
-                gave_up = True
-            got = {}
+        got = _classify_with_retry(classifier, lines, before, after, cancel)
+        for _ in range(MISSING_RETRIES):   # model bỏ sót dòng nào thì hỏi lại riêng dòng đó
+            missing = [l for l in lines if l["id"] not in got]
+            if not missing:
+                break
+            got = {**got, **_classify_with_retry(classifier, missing, before, after, cancel)}
+        lost = [l["id"] for l in lines if l["id"] not in got]
+        if lost:
+            res.warnings.append(f"Gemini không trả lời {len(lost)} phụ đề (từ #{lost[0]}), mặc định vẫn lồng tiếng.")
         for s in batch:
             if s.index in got:
                 verdict[s.index] = got[s.index]
