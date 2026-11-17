@@ -22,6 +22,13 @@ FONT_ARGS=()
 DUB_ARGS=()
 if [ -n "${TIKTOK_SESSIONID:-}" ]; then
   DUB_ARGS+=(--dub --voice BV074_streaming --orig-volume 0.3 --voice-volume 1.0)
+  # Lọc AI: có secret GEMINI_API_KEY thì Gemini bỏ các dòng không cần lồng (tiếng động, chữ trên màn hình...).
+  # Key đọc từ biến môi trường GEMINI_API_KEY (không truyền qua dòng lệnh). Gemini lỗi tạm thời thì tự thử lại.
+  if [ -n "${GEMINI_API_KEY:-}" ]; then
+    DUB_ARGS+=(--ai-filter --gemini-model "${GEMINI_MODEL:-gemini-3.5-flash-lite}")
+  else
+    echo "::notice::Chưa có secret GEMINI_API_KEY — lồng tiếng mọi dòng, không lọc AI."
+  fi
 else
   echo "::notice::Chưa có secret TIKTOK_SESSIONID — xuất không lồng tiếng."
 fi
