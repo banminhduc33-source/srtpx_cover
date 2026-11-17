@@ -29,7 +29,9 @@ from .model import SrtpxDocument, Subtitle
 
 RATE = 24000  # TikTok trả mp3 24 kHz mono
 DEFAULT_MAX_SPEED = 3.0
-DEFAULT_GAP = 0.08         # giây chừa im lặng giữa đuôi câu trước và đầu câu sau
+DEFAULT_GAP = 0.0          # giây chừa thêm giữa hết lời câu trước và đầu câu sau (TTS đã tự có khoảng lặng cuối câu)
+DEFAULT_TAIL_SILENCE = 0.3  # giây lặng sẵn ở cuối mỗi câu TTS: không tính vào thời lượng lời nói khi tính tốc độ
+DEFAULT_FIRST_START = 0.3  # phụ đề đầu tiên bắt đầu ở 0s thì dời sang mốc này
 DEFAULT_MAX_BORROW = 1.0   # giây tối đa được mượn thêm sau mốc kết thúc phụ đề (nếu chỗ trống còn dư)
 DEFAULT_MAX_PUSH = 0.5     # giây tối đa được lùi mốc bắt đầu để không đè lên giọng câu trước
 FADE_SECONDS = 0.008       # làm mềm đầu/đuôi mỗi câu để không bị "tạch" khi cắt
@@ -41,6 +43,8 @@ class DubOptions:
     max_speed: float = DEFAULT_MAX_SPEED  # trần tốc độ tua nhanh; vượt thì giọng tràn qua mốc kết thúc
     orig_volume: float = 0.3              # âm lượng âm thanh gốc khi trộn (1.0 = giữ nguyên)
     voice_volume: float = 1.0
+    tail_silence: float = DEFAULT_TAIL_SILENCE  # khoảng lặng cuối câu của TTS (0 = tính cả khoảng lặng như bản cũ)
+    first_start: float = DEFAULT_FIRST_START    # câu đầu tiên bắt đầu ở 0s thì dời sang mốc này (0 = không dời)
     gap: float = DEFAULT_GAP              # chừa im lặng giữa hai câu liền nhau (0 = như bản cũ)
     max_borrow: float = DEFAULT_MAX_BORROW  # được dùng thêm chỗ trống sau mốc kết thúc (0 = chỉ trong [start, end])
     max_push: float = DEFAULT_MAX_PUSH    # được lùi mốc bắt đầu nếu câu trước còn tràn (0 = cho đè như bản cũ)
@@ -285,6 +289,7 @@ def build_dub_track(
     report = DubReport()
     buf = array("h", bytes(int(total_seconds * RATE) * 2))
     watermark = 0
+    speech_end = 0.0   # giây: hết LỜI của câu trước (không tính khoảng lặng cuối câu, cho phép đuôi lặng chồng lên câu sau)
     todo = sorted((s for s in subs if s.index in clips), key=lambda s: (s.start, s.index))
     for i, sub in enumerate(todo):
         if cancel is not None and cancel.is_set():
@@ -292,19 +297,24 @@ def build_dub_track(
         if sub.start >= total_seconds:
             report.skipped_other.append(f"Phụ đề {sub.index}: bắt đầu sau khi video kết thúc")
             continue
-        # Mốc bắt đầu thực: câu trước còn tràn thì lùi nhẹ (tối đa max_push) thay vì đè lên.
+        # Mốc bắt đầu thực: câu đầu ở 0s thì dời sang first_start; câu trước còn tràn thì lùi nhẹ (tối đa max_push).
         start_s = sub.start
-        busy_until = watermark / RATE + options.gap
+        if i == 0 and sub.start <= 0 and options.first_start > 0:
+            start_s = min(options.first_start, total_seconds)
+        busy_until = speech_end + options.gap
         if options.max_push > 0 and busy_until > start_s:
-            start_s = min(busy_until, sub.start + options.max_push)
-            if start_s > sub.start + 1e-6:
+            pushed_to = min(busy_until, sub.start + options.max_push)
+            if pushed_to > start_s + 1e-6:
+                start_s = pushed_to
                 report.pushed.append(sub.index)
         nxt = todo[i + 1] if i + 1 < len(todo) else None
         own = max(0.0, sub.end - sub.start)
         # Khoảng cho phép; không để quá nhỏ (câu bị lùi/kẹt sát câu sau) để khỏi tua tới mức vô lý.
         slot = max(slot_end_for(sub, nxt, total_seconds, options) - start_s, 0.4 * own, 0.05)
         pcm = decode_pcm(ffmpeg, clips[sub.index])
-        dur = len(pcm) / 2 / RATE
+        full = len(pcm) / 2 / RATE
+        tail = min(max(0.0, options.tail_silence), full * 0.5)
+        dur = full - tail                  # thời lượng lời nói thật, khoảng lặng cuối câu không cần tua cho vừa
         sp = speed_for(dur, slot, options.max_speed)
         if dur > slot > 0 and dur / slot > options.max_speed + 1e-9:
             report.over_cap.append(sub.index)
@@ -314,9 +324,10 @@ def build_dub_track(
             report.max_factor = max(report.max_factor, sp)
         samples = fade_edges(_as_samples(pcm), int(FADE_SECONDS * RATE))
         pos = int(round(start_s * RATE))
-        if pos < watermark:
+        if pos < int(round(speech_end * RATE)) - 1:
             report.still_overlap.append(sub.index)
         watermark = place_clip(buf, samples, pos, watermark)
+        speech_end = (pos + len(samples)) / RATE - tail / max(sp, 1.0)
         report.placed += 1
         if on_progress:
             on_progress((i + 1) / len(todo))

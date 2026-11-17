@@ -27,8 +27,10 @@ FFMPEG, FFPROBE = shutil.which("ffmpeg"), shutil.which("ffprobe")
 need_ffmpeg = pytest.mark.skipif(not (FFMPEG and FFPROBE), reason="cần ffmpeg/ffprobe")
 
 
-def fake_mp3(seconds: float) -> bytes:
-    p = subprocess.run([FFMPEG, "-v", "error", "-f", "lavfi", "-i", f"sine=frequency=440:duration={seconds}",
+def fake_mp3(seconds: float, tail: float = 0.3) -> bytes:
+    """Giọng giả: `seconds` giây tiếng + `tail` giây lặng cuối câu (như TTS thật)."""
+    af = ["-af", f"apad=pad_dur={tail}"] if tail > 0 else []
+    p = subprocess.run([FFMPEG, "-v", "error", "-f", "lavfi", "-i", f"sine=frequency=440:duration={seconds}", *af,
                         "-ar", "24000", "-ac", "1", "-f", "mp3", "-"], capture_output=True, check=True)
     return p.stdout
 
@@ -161,7 +163,7 @@ def test_track_positions_and_speedup(tmp_path):
     wav = tmp_path / "dub.wav"
     rep = build_dub_track(FFMPEG, subs, clips, 14.0, DubOptions(max_speed=4.0), wav)
     assert rep.placed == 3 and rep.sped_up == 1 and not rep.over_cap
-    assert rep.max_factor == pytest.approx(2.1 / (0.7 - DubOptions().gap), rel=0.1)   # chừa gap trước câu 3
+    assert rep.max_factor == pytest.approx(3.0, rel=0.1)   # lời 2.1s vào khung 0.7s (khoảng lặng cuối câu không tính)
 
     with wave.open(str(wav)) as w:
         assert w.getframerate() == RATE and w.getnframes() == 14 * RATE
@@ -210,8 +212,27 @@ def test_no_overlap_tail_and_head(tmp_path):
     act = [abs(v) > 500 for v in pcm[: 4 * RATE]]
     end1 = max(i for i in range(int(2.34 * RATE)) if act[i]) / RATE        # đuôi câu 1 (~2.3s)
     start2 = min(i for i in range(int(2.35 * RATE), len(act)) if act[i]) / RATE
-    assert 2.2 < end1 < 2.4 and start2 - end1 >= 0.05                     # có khoảng im giữa đuôi câu 1 và đầu câu 2
+    assert 2.2 < end1 < 2.4 and abs(start2 - end1) < 0.05                 # câu 2 nối ngay sau hết lời câu 1, không chồng lời
     assert start2 < 2.6                                                    # lùi nhẹ, không lệch xa
+
+
+@need_ffmpeg
+def test_tail_silence_and_first_start(tmp_path):
+    """Khoảng lặng cuối câu TTS không bắt phải tua; câu đầu ở 0s thì dời sang 0.3s."""
+    from srtpx_cover.core.model import Subtitle
+    a, b = Subtitle(1, 0.0, 1.0, "a"), Subtitle(2, 1.0, 2.0, "b")
+    clips = {}
+    for i in (1, 2):                                  # lời 1.0s + lặng 0.3s = 1.3s
+        f = tmp_path / f"c{i}.mp3"; f.write_bytes(fake_mp3(1.0)); clips[i] = f
+    wav = tmp_path / "d.wav"
+    rep = build_dub_track(FFMPEG, [a, b], clips, 6.0, DubOptions(), wav)
+    assert rep.sped_up == 1 and rep.max_factor == pytest.approx(1.0 / 0.7, rel=0.1)   # câu 1 lùi 0.3s nên khung còn 0.7s; câu 2 vừa khung
+    with wave.open(str(wav)) as w:
+        pcm = array("h"); pcm.frombytes(w.readframes(w.getnframes()))
+    first = min(i for i, v in enumerate(pcm) if abs(v) > 500) / RATE
+    assert 0.28 < first < 0.36
+    rep0 = build_dub_track(FFMPEG, [a, b], clips, 6.0, DubOptions(first_start=0.0, tail_silence=0.0), tmp_path / "d0.wav")
+    assert rep0.max_factor == pytest.approx(1.3, rel=0.1)                              # tắt cả hai: như bản cũ
 
 
 @need_ffmpeg
