@@ -27,7 +27,7 @@ from .tts import TtsCancelled, TtsError
 
 log = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "gemini-3.6-flash"
+DEFAULT_MODEL = "gemini-3.5-flash-lite"
 ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 BATCH_SIZE = 40                 # số dòng cần phân loại mỗi lượt gọi
 CONTEXT_LINES = 3               # số dòng trước/sau lô đưa kèm để model hiểu tình huống

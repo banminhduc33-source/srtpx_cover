@@ -52,5 +52,5 @@ jobs:
           TIKTOK_SESSIONID: ${{ secrets.TIKTOK_SESSIONID }}
           # API key Gemini (Settings > Secrets) để lọc dòng không cần lồng. Không có secret thì lồng mọi dòng.
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.6-flash' }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.5-flash-lite' }}
         run: bash ci/process.sh
