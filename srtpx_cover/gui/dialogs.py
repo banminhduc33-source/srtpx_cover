@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..core.dub import DEFAULT_MAX_SPEED, DubOptions
+from ..core.dubfilter import DEFAULT_MODEL as DEFAULT_GEMINI_MODEL, Classifier, DubFilterError, gemini_classifier
 from ..core.ffmpeg_tools import FfmpegCancelled, FfmpegError, run_ffmpeg
 from ..core.geometry import DEFAULT_MARGIN_PX
 from ..core.tts import DEFAULT_VOICE, VOICES, TtsCancelled, TtsError
@@ -54,12 +55,37 @@ def dub_voice(s: QSettings) -> str:
     return str(s.value("dub/voice", DEFAULT_VOICE) or DEFAULT_VOICE).strip()
 
 
+def dub_ai_enabled(s: QSettings) -> bool:
+    return _bool(s, "dub/ai_filter", False)
+
+
+def dub_gemini_key(s: QSettings) -> str:
+    """API key Gemini trong Cài đặt; trống thì lấy biến môi trường GEMINI_API_KEY."""
+    import os
+    return (str(s.value("dub/gemini_key", "") or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip())
+
+
+def dub_gemini_model(s: QSettings) -> str:
+    return str(s.value("dub/gemini_model", DEFAULT_GEMINI_MODEL) or DEFAULT_GEMINI_MODEL).strip()
+
+
+def dub_classifier(s: QSettings) -> tuple[Classifier | None, str | None]:
+    """(hàm lọc Gemini hoặc None, cảnh báo hoặc None). Tắt lọc AI -> (None, None); bật mà thiếu key -> (None, lý do)."""
+    if not dub_ai_enabled(s):
+        return None, None
+    try:
+        return gemini_classifier(dub_gemini_key(s), dub_gemini_model(s)), None
+    except DubFilterError as exc:
+        return None, str(exc)
+
+
 def dub_options(s: QSettings) -> DubOptions:
     return DubOptions(
         include_comments=_bool(s, "dub/comments", False),
         max_speed=_float(s, "dub/max_speed", DEFAULT_MAX_SPEED),
         orig_volume=_float(s, "dub/orig_volume", 30) / 100.0,
         voice_volume=_float(s, "dub/voice_volume", 100) / 100.0,
+        ai_model=dub_gemini_model(s),
     )
 
 
@@ -99,6 +125,12 @@ class SettingsDialog(QDialog):
             self.voice.setEditText(cur)
         self.dub_floating = QCheckBox("Lồng cả chú thích (có *, trong ngoặc) và block trùng giờ — mặc định bỏ qua")
         self.dub_floating.setChecked(_bool(s, "dub/comments", False))
+        self.ai_on = QCheckBox("Lọc bằng AI (Gemini): bỏ dòng không cần lồng như tiếng động, chữ trên màn hình")
+        self.ai_on.setChecked(dub_ai_enabled(s))
+        self.gemini_key = QLineEdit(str(s.value("dub/gemini_key", "") or ""))
+        self.gemini_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self.gemini_key.setPlaceholderText("API key Gemini (hoặc biến môi trường GEMINI_API_KEY)")
+        self.gemini_model = QLineEdit(dub_gemini_model(s))
         self.orig_vol = QSpinBox(); self.orig_vol.setRange(0, 200); self.orig_vol.setSuffix(" %")
         self.orig_vol.setValue(_int(s, "dub/orig_volume", 30))
         self.voice_vol = QSpinBox(); self.voice_vol.setRange(0, 300); self.voice_vol.setSuffix(" %")
@@ -110,6 +142,8 @@ class SettingsDialog(QDialog):
         f3.addRow(self.dub_on)
         f3.addRow("sessionid", self.sid); f3.addRow("Giọng", self.voice)
         f3.addRow(self.dub_floating)
+        f3.addRow(self.ai_on)
+        f3.addRow("Gemini API key", self.gemini_key); f3.addRow("Model Gemini", self.gemini_model)
         f3.addRow("Âm thanh gốc", self.orig_vol); f3.addRow("Giọng đọc", self.voice_vol)
         f3.addRow("Tua nhanh tối đa", self.max_speed)
 
@@ -152,6 +186,8 @@ class SettingsDialog(QDialog):
         s.setValue("dub/enabled", self.dub_on.isChecked()); s.setValue("dub/sessionid", self.sid.text().strip())
         s.setValue("dub/voice", (self.voice.currentText().split() or [DEFAULT_VOICE])[0])
         s.setValue("dub/comments", self.dub_floating.isChecked())
+        s.setValue("dub/ai_filter", self.ai_on.isChecked()); s.setValue("dub/gemini_key", self.gemini_key.text().strip())
+        s.setValue("dub/gemini_model", self.gemini_model.text().strip() or DEFAULT_GEMINI_MODEL)
         s.setValue("dub/orig_volume", self.orig_vol.value()); s.setValue("dub/voice_volume", self.voice_vol.value())
         s.setValue("dub/max_speed", self.max_speed.value())
         for key, edit in zip(("primary", "vi", "cjk"), self.font_edits):

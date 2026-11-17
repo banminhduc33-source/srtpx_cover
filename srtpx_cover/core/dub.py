@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Sequence
 
+from .dubfilter import CACHE_NAME as AI_FILTER_CACHE, DEFAULT_MODEL, Classifier, FilterResult, filter_subtitles
 from .ffmpeg_tools import FfmpegError, FfmpegCancelled, _creationflags
 from .model import SrtpxDocument, Subtitle
 
@@ -34,6 +35,7 @@ class DubOptions:
     max_speed: float = DEFAULT_MAX_SPEED  # trần tốc độ tua nhanh; vượt thì giọng tràn qua mốc kết thúc
     orig_volume: float = 0.3              # âm lượng âm thanh gốc khi trộn (1.0 = giữ nguyên)
     voice_volume: float = 1.0
+    ai_model: str = DEFAULT_MODEL         # model Gemini lọc dòng không cần lồng (chỉ để làm khóa cache; có classifier mới lọc)
 
 
 @dataclass
@@ -45,6 +47,8 @@ class DubReport:
     skipped_comments: list[int] = field(default_factory=list)
     skipped_overlap: list[int] = field(default_factory=list)
     skipped_floating: list[int] = field(default_factory=list)   # chữ bay lơ lửng (không nằm ở phần dưới khung hình)
+    skipped_ai: list[int] = field(default_factory=list)         # Gemini cho là không cần lồng (tiếng động, chữ trên màn hình...)
+    ai_reasons: dict[int, str] = field(default_factory=dict)    # {chỉ số phụ đề: lý do Gemini bỏ}
     skipped_other: list[str] = field(default_factory=list)
 
     def summary(self) -> str:
@@ -57,6 +61,8 @@ class DubReport:
             s += f", bỏ qua {len(self.skipped_overlap)} block trùng giờ"
         if self.skipped_floating:
             s += f", bỏ qua {len(self.skipped_floating)} chữ bay lơ lửng (không nằm ở dưới)"
+        if self.skipped_ai:
+            s += f", AI lọc bỏ {len(self.skipped_ai)} dòng không cần lồng"
         return s + "."
 
 
@@ -136,6 +142,23 @@ def split_dub_subtitles(doc: SrtpxDocument, include_comments: bool = False):
             kept.append(sub)
             last_end = max(last_end, sub.end)
     return kept, comments, overlaps, floating
+
+
+def apply_ai_filter(
+    subs: Sequence[Subtitle],
+    doc: SrtpxDocument,
+    options: DubOptions,
+    classifier: Classifier | None,
+    cache_dir: Path,
+    on_progress: Callable[[float], None] | None = None,
+    cancel: threading.Event | None = None,
+) -> FilterResult:
+    """Bước lọc thứ hai (sau luật cứng): Gemini bỏ các dòng không phải lời nói. Không có classifier hoặc
+    `include_comments=True` (lồng tất cả) thì giữ nguyên danh sách."""
+    if classifier is None or options.include_comments or not subs:
+        return FilterResult(kept=list(subs))
+    return filter_subtitles(subs, doc.subtitles, classifier, cache_dir / AI_FILTER_CACHE, options.ai_model,
+                            on_progress, cancel)
 
 
 # ---------------------------------------------------------------- tốc độ
@@ -297,9 +320,11 @@ def prepare_dub_audio(
     ffprobe: str,
     on_progress: Callable[[float], None] | None = None,
     cancel: threading.Event | None = None,
+    classifier: Classifier | None = None,
 ) -> tuple[Path | None, DubReport, list[str]]:
     """Tạo giọng từng câu (cache), dựng track theo mốc, trộn với âm thanh gốc.
 
+    `classifier` (Gemini, xem dubfilter.py) nếu có sẽ lọc thêm các dòng không phải lời nói trước khi tạo giọng.
     Trả về (file .m4a để thêm vào video — None nếu không có câu nào để lồng, báo cáo, cảnh báo).
     """
     from .ffmpeg_tools import run_ffmpeg
@@ -309,17 +334,21 @@ def prepare_dub_audio(
         return lambda p: on_progress(lo + (hi - lo) * p) if on_progress else None
 
     subs, comments, overlaps, floating = split_dub_subtitles(doc, options.include_comments)
+    ai = apply_ai_filter(subs, doc, options, classifier, cache_dir, stage(0.0, 0.1), cancel)
+    subs = ai.kept
     skipped = dict(skipped_comments=[s.index for s in comments], skipped_overlap=[s.index for s in overlaps],
-                   skipped_floating=[s.index for s in floating])
+                   skipped_floating=[s.index for s in floating], skipped_ai=[s.index for s in ai.dropped],
+                   ai_reasons=dict(ai.reasons))
     if not subs:
         rep = DubReport(**skipped)
-        return None, rep, ["Không có phụ đề nào để lồng tiếng."]
-    clips, errors = ensure_clips(subs, voice, cache_dir, synth, stage(0.0, 0.55), cancel)
+        return None, rep, [*ai.warnings, "Không có phụ đề nào để lồng tiếng."]
+    clips, errors = ensure_clips(subs, voice, cache_dir, synth, stage(0.1, 0.55), cancel)
     wav = workdir / "dub.wav"
     rep = build_dub_track(ffmpeg, subs, clips, total_seconds, options, wav, stage(0.55, 0.8), cancel)
     rep.skipped_comments, rep.skipped_overlap = skipped["skipped_comments"], skipped["skipped_overlap"]
     rep.skipped_floating = skipped["skipped_floating"]
-    warnings = list(errors)
+    rep.skipped_ai, rep.ai_reasons = skipped["skipped_ai"], skipped["ai_reasons"]
+    warnings = [*ai.warnings, *errors]
     if rep.over_cap:
         warnings.append("Cần tua nhanh hơn trần x%.1f nên giọng tràn qua mốc kết thúc ở phụ đề: %s."
                         % (options.max_speed, ", ".join(map(str, rep.over_cap))))
