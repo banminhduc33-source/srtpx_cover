@@ -76,6 +76,36 @@ def missing_chars(font: FontData, text: str) -> list[str]:
     return list(seen)
 
 
+# Dấu câu hay gặp trong bản dịch mà font đẹp (Bevan...) thường thiếu -> ký tự tương đương dễ có.
+PUNCT_FOLD = {
+    "《": '"', "》": '"', "〈": '"', "〉": '"', "「": '"', "」": '"', "『": '"', "』": '"', "｢": '"', "｣": '"',
+    "“": '"', "”": '"', "„": '"', "‟": '"', "«": '"', "»": '"', "‹": '"', "›": '"',
+    "‘": "'", "’": "'", "‚": "'", "‛": "'",
+    "【": "[", "】": "]", "〔": "(", "〕": ")", "〖": "[", "〗": "]", "（": "(", "）": ")", "［": "[", "］": "]",
+    "｛": "{", "｝": "}", "…": "...", "—": "-", "–": "-", "―": "-", "～": "~", "、": ",", "，": ",", "。": ".",
+    "：": ":", "；": ";", "？": "?", "！": "!", "\u3000": " ", "\u00a0": " ",
+}
+
+
+def fold_for_font(text: str, chain: Sequence[FontData]) -> str:
+    """Đổi các dấu câu mà font chính (chain[0]) thiếu sang ký tự tương đương để CẢ câu vẽ bằng font chính,
+    khỏi bị nhảy sang font dự phòng (khác kiểu chữ) chỉ vì 1 dấu ngoặc kép/ngoặc.
+
+    Chỉ áp dụng khi sau khi đổi font chính phủ trọn câu; nếu không thì giữ nguyên chữ gốc (vd chữ Hán thật)."""
+    if not chain or not missing_chars(chain[0], text):
+        return text
+    base = chain[0]
+    out = []
+    for ch in text:
+        if _ignored(ch) or (not is_emoji(ch) and base.has_char(ch)):
+            out.append(ch)
+            continue
+        sub = PUNCT_FOLD.get(ch) or unicodedata.normalize("NFKC", ch)
+        out.append(sub if sub != ch and not missing_chars(base, sub) else ch)
+    folded = "".join(out)
+    return folded if not missing_chars(base, folded) else text
+
+
 @dataclass(frozen=True)
 class FontChoice:
     font: FontData

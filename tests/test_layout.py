@@ -4,7 +4,8 @@ from pathlib import Path
 import pytest
 
 from srtpx_cover.core.layout import fit_text
-from tests.helpers import fake_chain
+from srtpx_cover.core.fonts import FontData
+from tests.helpers import ASCII_NO_SPACE, VIET_CHARS, fake_chain, make_font
 
 LATIN, VIET, CJK = fake_chain(Path(tempfile.mkdtemp()))
 # LATIN: mỗi ký tự 0.6em => chiều rộng px = n * 0.6 * size * 1.04 ; CJK: 1.0em
@@ -71,3 +72,25 @@ def test_layout_dimensions():
     lay = fit_text("ab\ncd", LATIN, 500, 60)
     assert lay.line_height == pytest.approx(1.2 * lay.size)
     assert lay.block_height == pytest.approx(2 * 1.2 * lay.size)
+
+
+# ---- dấu câu font chính thiếu: đổi sang ký tự tương đương để cả câu giữ MỘT font
+
+def test_missing_bracket_does_not_switch_whole_subtitle_to_fallback_font():
+    from srtpx_cover.core.fonts import choose_font, fold_for_font
+    from srtpx_cover.core.layout import plan_text
+    from srtpx_cover.core.model import Box, Subtitle
+    primary = FontData(make_font(Path(tempfile.mkdtemp()) / "p.ttf", ASCII_NO_SPACE + VIET_CHARS))   # có " nhưng không có 《》
+    fallback = FontData(make_font(Path(tempfile.mkdtemp()) / "f.ttf", ASCII_NO_SPACE + VIET_CHARS + "《》"))
+    chain = [primary, fallback]
+    text = "《Thôi học nhưng được tuyển thẳng》"
+    assert choose_font(text, chain).chain_index == 1                       # trước: nhảy sang font dự phòng
+    assert fold_for_font(text, chain) == '"Thôi học nhưng được tuyển thẳng"'
+    choice, plan = plan_text(Subtitle(1, 0.0, 1.0, text, Box(0, 100, 0, 30), []), chain)
+    assert choice.chain_index == 0 and plan.lines == ('"Thôi học nhưng được tuyển thẳng"',)
+
+
+def test_fold_keeps_real_cjk_text_untouched():
+    from srtpx_cover.core.fonts import fold_for_font
+    assert fold_for_font("《原神》", [LATIN, CJK]) == "《原神》"             # font chính không phủ nổi chữ Hán => giữ nguyên
+    assert fold_for_font("Xin chào", [VIET]) == "Xin chào"

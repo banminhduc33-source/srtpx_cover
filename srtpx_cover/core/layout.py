@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Sequence
 
-from .fonts import LINE_HEIGHT_FACTOR, FontChoice, FontData, choose_font, text_width
+from .fonts import LINE_HEIGHT_FACTOR, FontChoice, FontData, choose_font, fold_for_font, text_width
 from .geometry import Scale, smallest_pixel_size
 from .model import Subtitle
 
@@ -66,9 +66,10 @@ def plan_subtitle_text(
     Chỉ còn dùng để cảnh báo "hộp quá nhỏ"; cỡ chữ thực tế vẽ ra tính theo từng thời điểm
     bằng `layout_at` (hộp phóng to thì chữ phóng to theo).
     """
-    choice = choose_font(sub.text, chain)
+    text = fold_for_font(sub.text, chain)
+    choice = choose_font(text, chain)
     bw, bh = smallest_pixel_size(sub, scale, margin, video_size)
-    return choice, fit_text(sub.text, choice.font, bw, bh)
+    return choice, fit_text(text, choice.font, bw, bh)
 
 
 @dataclass(frozen=True)
@@ -100,7 +101,8 @@ class TextPlan:
 
 def plan_text(sub: Subtitle, chain: Sequence[FontData]) -> tuple[FontChoice, TextPlan]:
     """Chọn font và tách dòng cho MỘT phụ đề. Cố định suốt thời gian hiển thị."""
-    choice = choose_font(sub.text, chain)
-    lines = tuple(_normalize_lines(sub.text))
+    text = fold_for_font(sub.text, chain)
+    choice = choose_font(text, chain)
+    lines = tuple(_normalize_lines(text))
     em = max((text_width(choice.font, ln, 1.0) for ln in lines), default=0.0)
     return choice, TextPlan(lines, em)
