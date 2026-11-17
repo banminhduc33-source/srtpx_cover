@@ -44,6 +44,7 @@ class DubReport:
     over_cap: list[int] = field(default_factory=list)   # phụ đề cần tua nhanh hơn trần cho phép
     skipped_comments: list[int] = field(default_factory=list)
     skipped_overlap: list[int] = field(default_factory=list)
+    skipped_floating: list[int] = field(default_factory=list)   # chữ bay lơ lửng (không nằm ở phần dưới khung hình)
     skipped_other: list[str] = field(default_factory=list)
 
     def summary(self) -> str:
@@ -54,6 +55,8 @@ class DubReport:
             s += f", bỏ qua {len(self.skipped_comments)} chú thích"
         if self.skipped_overlap:
             s += f", bỏ qua {len(self.skipped_overlap)} block trùng giờ"
+        if self.skipped_floating:
+            s += f", bỏ qua {len(self.skipped_floating)} chữ bay lơ lửng (không nằm ở dưới)"
         return s + "."
 
 
@@ -73,6 +76,7 @@ QUOTE_PAIRS = {'"': '"', "'": "'", "“": "”", "‘": "’", "«": "»", "‹"
 # Dấu đánh dấu chú thích ở đầu/cuối nội dung.
 MARKERS = "*＊#＃※★☆†‡✱✲⁎"
 _STRIP = "".join(BRACKET_PAIRS) + "".join(BRACKET_PAIRS.values()) + "".join(QUOTE_PAIRS) + "".join(QUOTE_PAIRS.values()) + " \t\r\n"
+BOTTOM_MIN_CENTER_RATIO = 0.6   # tâm hộp phải ở từ 60% chiều cao khung hình trở xuống mới là phụ đề "ở dưới"
 OVERLAP_TOL = 0.05  # giây: chồng nhỏ hơn mức này coi như chỉ chạm nhau (sai số làm tròn mốc)
 
 
@@ -88,22 +92,40 @@ def is_comment(text: str) -> bool:
     return len(t) >= 2 and BRACKET_PAIRS.get(t[0]) == t[-1]
 
 
+def is_bottom(sub: Subtitle, doc: SrtpxDocument) -> bool:
+    """Phụ đề nằm ở phần dưới khung hình (tâm hộp >= BOTTOM_MIN_CENTER_RATIO chiều cao #res).
+    Có keyframe thì lấy trung bình tâm các keyframe. File không có dòng #res thì không phân biệt được: coi là ở dưới."""
+    if not doc.res:
+        return True
+    boxes = [k.box for k in sub.keyframes] or ([sub.box] if sub.box is not None else [])
+    if not boxes:
+        return True
+    cy = sum((b.y1 + b.y2) / 2 for b in boxes) / len(boxes)
+    return cy >= BOTTOM_MIN_CENTER_RATIO * doc.res[1]
+
+
 def select_dub_subtitles(doc: SrtpxDocument, include_comments: bool = False) -> list[Subtitle]:
-    """Các phụ đề sẽ được lồng tiếng: có chữ, không phải chú thích, và là block chính trong nhóm trùng giờ."""
+    """Các phụ đề sẽ được lồng tiếng: có chữ, nằm ở dưới, không phải chú thích, và là block chính trong nhóm trùng giờ."""
     return split_dub_subtitles(doc, include_comments)[0]
 
 
 def split_dub_subtitles(doc: SrtpxDocument, include_comments: bool = False):
-    """(sẽ lồng, chú thích bị bỏ, block trùng giờ bị bỏ). Mỗi nhóm trùng giờ giữ block bắt đầu sớm nhất."""
+    """(sẽ lồng, chú thích bị bỏ, block trùng giờ bị bỏ, chữ bay lơ lửng bị bỏ).
+
+    Chỉ lồng phụ đề nằm ở dưới; chữ ở chỗ khác (giữa/trên khung hình) bỏ qua. Mỗi nhóm trùng giờ giữ block
+    bắt đầu sớm nhất. `include_comments=True` tắt hết các luật bỏ qua này."""
     kept: list[Subtitle] = []
     comments: list[Subtitle] = []
     overlaps: list[Subtitle] = []
+    floating: list[Subtitle] = []
     cands = []
     for sub in doc.subtitles:
         if not sub.text.strip():
             continue
         if is_comment(sub.text) and not include_comments:
             comments.append(sub)
+        elif not include_comments and not is_bottom(sub, doc):
+            floating.append(sub)
         else:
             cands.append(sub)
     last_end = float("-inf")
@@ -113,7 +135,7 @@ def split_dub_subtitles(doc: SrtpxDocument, include_comments: bool = False):
         else:
             kept.append(sub)
             last_end = max(last_end, sub.end)
-    return kept, comments, overlaps
+    return kept, comments, overlaps, floating
 
 
 # ---------------------------------------------------------------- tốc độ
@@ -286,8 +308,9 @@ def prepare_dub_audio(
     def stage(lo: float, hi: float) -> Callable[[float], None]:
         return lambda p: on_progress(lo + (hi - lo) * p) if on_progress else None
 
-    subs, comments, overlaps = split_dub_subtitles(doc, options.include_comments)
-    skipped = dict(skipped_comments=[s.index for s in comments], skipped_overlap=[s.index for s in overlaps])
+    subs, comments, overlaps, floating = split_dub_subtitles(doc, options.include_comments)
+    skipped = dict(skipped_comments=[s.index for s in comments], skipped_overlap=[s.index for s in overlaps],
+                   skipped_floating=[s.index for s in floating])
     if not subs:
         rep = DubReport(**skipped)
         return None, rep, ["Không có phụ đề nào để lồng tiếng."]
@@ -295,6 +318,7 @@ def prepare_dub_audio(
     wav = workdir / "dub.wav"
     rep = build_dub_track(ffmpeg, subs, clips, total_seconds, options, wav, stage(0.55, 0.8), cancel)
     rep.skipped_comments, rep.skipped_overlap = skipped["skipped_comments"], skipped["skipped_overlap"]
+    rep.skipped_floating = skipped["skipped_floating"]
     warnings = list(errors)
     if rep.over_cap:
         warnings.append("Cần tua nhanh hơn trần x%.1f nên giọng tràn qua mốc kết thúc ở phụ đề: %s."

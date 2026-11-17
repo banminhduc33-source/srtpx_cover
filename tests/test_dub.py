@@ -16,6 +16,13 @@ from srtpx_cover.core.parser import read_srtpx
 from srtpx_cover.core.tts import TtsError, clip_path, ensure_clips, split_text
 
 DATA = Path(__file__).parent / "data" / "testvn.srtpx"
+
+
+def _sample_doc():
+    """File mẫu có chữ ở nửa trên khung hình; bỏ #res để không áp luật "chỉ lồng phụ đề ở dưới" (test này kiểm tra thời gian)."""
+    doc = read_srtpx(DATA).document
+    doc.res = None
+    return doc
 FFMPEG, FFPROBE = shutil.which("ffmpeg"), shutil.which("ffprobe")
 need_ffmpeg = pytest.mark.skipif(not (FFMPEG and FFPROBE), reason="cần ffmpeg/ffprobe")
 
@@ -50,14 +57,27 @@ def test_overlap_keeps_only_main_block():
     doc = SrtpxDocument(subtitles=[
         mk(1, 0.0, 3.0, "Câu chính"), mk(2, 1.0, 2.0, "Câu phụ chồng giờ"), mk(3, 2.0, 2.5, "*Bình luận*"),
         mk(4, 3.0, 4.0, "Câu kế tiếp (chỉ chạm mép)"), mk(5, 5.0, 6.0, "(cười)")])
-    kept, comments, overlaps = split_dub_subtitles(doc)
+    kept, comments, overlaps, floating = split_dub_subtitles(doc)
     assert [s.index for s in kept] == [1, 4]
     assert [s.index for s in comments] == [3, 5] and [s.index for s in overlaps] == [2]
     assert [s.index for s in select_dub_subtitles(doc, include_comments=True)] == [1, 2, 3, 4, 5]
 
 
+def test_only_bottom_subtitles_are_dubbed_floating_text_is_skipped():
+    from srtpx_cover.core.model import Box, SrtpxDocument, Subtitle
+    bottom, top, mid = Box(100, 400, 500, 550), Box(100, 400, 20, 60), Box(100, 400, 250, 300)
+    doc = SrtpxDocument(res=(768, 576), subtitles=[
+        Subtitle(1, 0.0, 1.0, "Dưới", box=bottom), Subtitle(2, 2.0, 3.0, "Trên cùng", box=top),
+        Subtitle(3, 4.0, 5.0, "Giữa khung", box=mid), Subtitle(4, 6.0, 7.0, "Dưới nữa", box=bottom)])
+    kept, comments, overlaps, floating = split_dub_subtitles(doc)
+    assert [s.index for s in kept] == [1, 4] and [s.index for s in floating] == [2, 3]
+    assert [s.index for s in select_dub_subtitles(doc, include_comments=True)] == [1, 2, 3, 4]   # công tắc tắt luật
+    doc.res = None                                        # không có #res: không phân biệt được => lồng hết
+    assert [s.index for s in select_dub_subtitles(doc)] == [1, 2, 3, 4]
+
+
 def test_user_sample_all_main_blocks_dubbed():
-    doc = read_srtpx(DATA).document
+    doc = _sample_doc()
     assert [s.index for s in select_dub_subtitles(doc)] == [1, 2, 3, 4, 5]
 
 
@@ -81,7 +101,7 @@ def test_place_clip_overlap_adds_and_clamps():
 
 
 def test_ensure_clips_cache_and_abort(tmp_path):
-    doc = read_srtpx(DATA).document
+    doc = _sample_doc()
     subs = select_dub_subtitles(doc)
     calls = []
 
@@ -106,7 +126,7 @@ def test_ensure_clips_cache_and_abort(tmp_path):
 @need_ffmpeg
 def test_track_positions_and_speedup(tmp_path):
     """Giọng ngắn: đúng mốc bắt đầu, phần sau im. Giọng dài: tua nhanh cho vừa khung."""
-    doc = read_srtpx(DATA).document
+    doc = _sample_doc()
     subs = select_dub_subtitles(doc)              # 2: 9.467-10.167 (0.7s) | 3: 10.167-11.167 (1s) | 4: 11.833-...
     by = {s.index: s for s in subs}
     lengths = {2: 2.1, 3: 0.4, 4: 0.5}            # 2 dài gấp 3 so với khung (0.7s); 3 ngắn; 4 ngắn
@@ -139,7 +159,7 @@ def test_track_positions_and_speedup(tmp_path):
 
 @need_ffmpeg
 def test_over_cap_reported(tmp_path):
-    doc = read_srtpx(DATA).document
+    doc = _sample_doc()
     subs = [s for s in select_dub_subtitles(doc) if s.index == 2]  # khung 0.7s
     f = tmp_path / "c.mp3"; f.write_bytes(fake_mp3(3.5))           # cần x5
     rep = build_dub_track(FFMPEG, subs, {2: f}, 14.0, DubOptions(max_speed=2.0), tmp_path / "d.wav")
@@ -157,8 +177,10 @@ def test_end_to_end_cli_export_has_dubbed_audio(tmp_path, monkeypatch):
                     "-pix_fmt", "yuv420p", "-c:a", "aac", str(video)], check=True)
     monkeypatch.setattr(cli, "tiktok_synthesizer", lambda sid: (lambda text, voice: fake_mp3(0.3 + 0.05 * len(text) / 4)))
     out = tmp_path / "out.mp4"
+    sample = tmp_path / "sample.srtpx"            # bỏ dòng #res: không áp luật "chỉ lồng phụ đề ở dưới"
+    sample.write_bytes(b"\r\n".join(l for l in DATA.read_bytes().splitlines() if not l.startswith(b"#res")))
     font = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-    args = [str(video), str(DATA), str(out), "--dub", "--sessionid", "x", "--tts-cache", str(tmp_path / "cache"),
+    args = [str(video), str(sample), str(out), "--dub", "--sessionid", "x", "--tts-cache", str(tmp_path / "cache"),
             "--orig-volume", "0", "--no-text", "--no-vertical"]
     if Path(font).exists():
         args += ["--font", font]
