@@ -25,7 +25,7 @@ if [ -n "${TIKTOK_SESSIONID:-}" ]; then
   # Lọc AI: có secret GEMINI_API_KEY thì Gemini bỏ các dòng không cần lồng (tiếng động, chữ trên màn hình...).
   # Key đọc từ biến môi trường GEMINI_API_KEY (không truyền qua dòng lệnh). Gemini lỗi tạm thời thì tự thử lại.
   if [ -n "${GEMINI_API_KEY:-}" ]; then
-    DUB_ARGS+=(--ai-filter --gemini-model "${GEMINI_MODEL:-gemini-3.5-flash-lite}")
+    DUB_ARGS+=(--ai-filter --gemini-model "${GEMINI_MODEL:-gemini-3.6-flash}")
   else
     echo "::notice::Chưa có secret GEMINI_API_KEY — lồng tiếng mọi dòng, không lọc AI."
   fi
