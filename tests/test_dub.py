@@ -161,7 +161,7 @@ def test_track_positions_and_speedup(tmp_path):
     wav = tmp_path / "dub.wav"
     rep = build_dub_track(FFMPEG, subs, clips, 14.0, DubOptions(max_speed=4.0), wav)
     assert rep.placed == 3 and rep.sped_up == 1 and not rep.over_cap
-    assert rep.max_factor == pytest.approx(3.0, rel=0.1)
+    assert rep.max_factor == pytest.approx(2.1 / (0.7 - DubOptions().gap), rel=0.1)   # chừa gap trước câu 3
 
     with wave.open(str(wav)) as w:
         assert w.getframerate() == RATE and w.getnframes() == 14 * RATE
@@ -178,6 +178,40 @@ def test_track_positions_and_speedup(tmp_path):
     assert active(by[3].start + 0.5, by[3].end) == 0                # câu 3 ngắn: phần còn lại im, không kéo dãn
     assert active(by[4].start + 0.05, by[4].start + 0.45) > 0.8 * 0.4 * RATE
     assert active(by[4].start + 0.7, 14.0) == 0
+
+
+@need_ffmpeg
+def test_borrows_silent_gap_instead_of_speeding_up(tmp_path):
+    """Giữa hai câu có khoảng trống thì giọng dài được mượn chỗ trống, không phải tua nhanh hết cỡ."""
+    from srtpx_cover.core.model import Subtitle
+    a, b = Subtitle(1, 1.0, 2.0, "a"), Subtitle(2, 3.0, 4.0, "b")
+    clips = {}
+    for i, sec in {1: 1.5, 2: 0.5}.items():
+        f = tmp_path / f"c{i}.mp3"; f.write_bytes(fake_mp3(sec)); clips[i] = f
+    rep = build_dub_track(FFMPEG, [a, b], clips, 6.0, DubOptions(), tmp_path / "d.wav")
+    assert rep.sped_up == 0 and not rep.over_cap and not rep.pushed and not rep.still_overlap   # 1.5s vừa trong 1.0s + chỗ mượn
+    rep = build_dub_track(FFMPEG, [a, b], clips, 6.0, DubOptions(max_borrow=0), tmp_path / "d2.wav")
+    assert rep.sped_up == 1                                            # tắt mượn thì phải tua như bản cũ
+
+
+@need_ffmpeg
+def test_no_overlap_tail_and_head(tmp_path):
+    """Câu 1 đã tua hết trần mà vẫn tràn qua mốc câu 2: câu 2 lùi nhẹ, giữa hai câu có khoảng im (không chồng)."""
+    from srtpx_cover.core.model import Subtitle
+    a, b = Subtitle(1, 1.0, 2.0, "a"), Subtitle(2, 2.0, 3.0, "b")
+    clips = {}
+    for i, sec in {1: 2.6, 2: 0.6}.items():        # câu 1 cần x2.6 > trần x2 => dài 1.3s, tràn tới 2.3s
+        f = tmp_path / f"c{i}.mp3"; f.write_bytes(fake_mp3(sec)); clips[i] = f
+    wav = tmp_path / "d.wav"
+    rep = build_dub_track(FFMPEG, [a, b], clips, 6.0, DubOptions(max_speed=2.0), wav)
+    assert rep.over_cap == [1] and rep.pushed == [2] and not rep.still_overlap
+    with wave.open(str(wav)) as w:
+        pcm = array("h"); pcm.frombytes(w.readframes(w.getnframes()))
+    act = [abs(v) > 500 for v in pcm[: 4 * RATE]]
+    end1 = max(i for i in range(int(2.34 * RATE)) if act[i]) / RATE        # đuôi câu 1 (~2.3s)
+    start2 = min(i for i in range(int(2.35 * RATE), len(act)) if act[i]) / RATE
+    assert 2.2 < end1 < 2.4 and start2 - end1 >= 0.05                     # có khoảng im giữa đuôi câu 1 và đầu câu 2
+    assert start2 < 2.6                                                    # lùi nhẹ, không lệch xa
 
 
 @need_ffmpeg

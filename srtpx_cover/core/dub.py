@@ -2,8 +2,10 @@
 
 Quy tắc:
 - Giọng đặt đúng mốc BẮT ĐẦU của phụ đề.
-- Giọng DÀI hơn khoảng [start, end] của phụ đề thì tua nhanh (atempo) cho vừa khít.
-- Giọng NGẮN hơn thì giữ nguyên tốc độ, phần còn lại để im.
+- Khoảng cho phép của một câu = từ mốc bắt đầu tới (mốc bắt đầu câu kế - GAP), tối đa mượn thêm MAX_BORROW giây
+  sau mốc kết thúc phụ đề (tận dụng chỗ trống giữa hai câu), nên đầu/đuôi hai câu không dính vào nhau.
+- Giọng DÀI hơn khoảng cho phép thì tua nhanh (atempo) cho vừa; NGẮN hơn thì giữ nguyên tốc độ, phần còn lại để im.
+- Câu trước vẫn tràn (đã chạm trần tốc độ) thì câu sau được lùi mốc bắt đầu tối đa MAX_PUSH giây thay vì đè lên.
 - Phụ đề chú thích ("lơ lửng": có dấu * hoặc cả câu nằm trong ngoặc) mặc định KHÔNG lồng tiếng.
 - Các block trùng giờ nhau thì chỉ MỘT block chính được lồng (block bắt đầu sớm nhất), còn lại bỏ qua.
 
@@ -27,6 +29,10 @@ from .model import SrtpxDocument, Subtitle
 
 RATE = 24000  # TikTok trả mp3 24 kHz mono
 DEFAULT_MAX_SPEED = 3.0
+DEFAULT_GAP = 0.08         # giây chừa im lặng giữa đuôi câu trước và đầu câu sau
+DEFAULT_MAX_BORROW = 1.0   # giây tối đa được mượn thêm sau mốc kết thúc phụ đề (nếu chỗ trống còn dư)
+DEFAULT_MAX_PUSH = 0.5     # giây tối đa được lùi mốc bắt đầu để không đè lên giọng câu trước
+FADE_SECONDS = 0.008       # làm mềm đầu/đuôi mỗi câu để không bị "tạch" khi cắt
 
 
 @dataclass(frozen=True)
@@ -35,6 +41,9 @@ class DubOptions:
     max_speed: float = DEFAULT_MAX_SPEED  # trần tốc độ tua nhanh; vượt thì giọng tràn qua mốc kết thúc
     orig_volume: float = 0.3              # âm lượng âm thanh gốc khi trộn (1.0 = giữ nguyên)
     voice_volume: float = 1.0
+    gap: float = DEFAULT_GAP              # chừa im lặng giữa hai câu liền nhau (0 = như bản cũ)
+    max_borrow: float = DEFAULT_MAX_BORROW  # được dùng thêm chỗ trống sau mốc kết thúc (0 = chỉ trong [start, end])
+    max_push: float = DEFAULT_MAX_PUSH    # được lùi mốc bắt đầu nếu câu trước còn tràn (0 = cho đè như bản cũ)
     ai_model: str = DEFAULT_MODEL         # model Gemini lọc dòng không cần lồng (chỉ để làm khóa cache; có classifier mới lọc)
 
 
@@ -44,6 +53,8 @@ class DubReport:
     sped_up: int = 0
     max_factor: float = 1.0
     over_cap: list[int] = field(default_factory=list)   # phụ đề cần tua nhanh hơn trần cho phép
+    pushed: list[int] = field(default_factory=list)     # phụ đề bị lùi mốc bắt đầu để khỏi đè lên câu trước
+    still_overlap: list[int] = field(default_factory=list)  # phụ đề vẫn đè lên câu trước dù đã lùi hết mức
     skipped_comments: list[int] = field(default_factory=list)
     skipped_overlap: list[int] = field(default_factory=list)
     skipped_floating: list[int] = field(default_factory=list)   # chữ bay lơ lửng (không nằm ở phần dưới khung hình)
@@ -55,6 +66,10 @@ class DubReport:
         s = f"Đã lồng {self.placed} câu"
         if self.sped_up:
             s += f", {self.sped_up} câu tua nhanh (tối đa x{self.max_factor:.2f})"
+        if self.pushed:
+            s += f", {len(self.pushed)} câu lùi mốc nhẹ để khỏi đè"
+        if self.still_overlap:
+            s += f", {len(self.still_overlap)} câu vẫn đè câu trước"
         if self.skipped_comments:
             s += f", bỏ qua {len(self.skipped_comments)} chú thích"
         if self.skipped_overlap:
@@ -238,6 +253,24 @@ def place_clip(buf: array, samples: array, start: int, watermark: int) -> int:
     return max(watermark, start + n)
 
 
+def slot_end_for(sub: Subtitle, nxt: Subtitle | None, total_seconds: float, options: DubOptions) -> float:
+    """Mốc giây muộn nhất mà giọng của `sub` được phép kéo dài tới: chừa `gap` trước câu kế, và chỉ mượn tối đa
+    `max_borrow` giây sau mốc kết thúc phụ đề. Câu cuối thì tới hết video."""
+    limit = (nxt.start - options.gap) if nxt is not None else total_seconds
+    return min(sub.end + max(0.0, options.max_borrow), limit, total_seconds)
+
+
+def fade_edges(samples: array, fade: int) -> array:
+    """Giảm dần biên độ ở đầu và đuôi `fade` mẫu (tránh tiếng "tạch" khi hai câu sát nhau)."""
+    n = len(samples)
+    f = min(fade, n // 2)
+    for i in range(f):
+        k = i / f
+        samples[i] = int(samples[i] * k)
+        samples[n - 1 - i] = int(samples[n - 1 - i] * k)
+    return samples
+
+
 def build_dub_track(
     ffmpeg: str,
     subs: Sequence[Subtitle],
@@ -259,7 +292,17 @@ def build_dub_track(
         if sub.start >= total_seconds:
             report.skipped_other.append(f"Phụ đề {sub.index}: bắt đầu sau khi video kết thúc")
             continue
-        slot = sub.end - sub.start
+        # Mốc bắt đầu thực: câu trước còn tràn thì lùi nhẹ (tối đa max_push) thay vì đè lên.
+        start_s = sub.start
+        busy_until = watermark / RATE + options.gap
+        if options.max_push > 0 and busy_until > start_s:
+            start_s = min(busy_until, sub.start + options.max_push)
+            if start_s > sub.start + 1e-6:
+                report.pushed.append(sub.index)
+        nxt = todo[i + 1] if i + 1 < len(todo) else None
+        own = max(0.0, sub.end - sub.start)
+        # Khoảng cho phép; không để quá nhỏ (câu bị lùi/kẹt sát câu sau) để khỏi tua tới mức vô lý.
+        slot = max(slot_end_for(sub, nxt, total_seconds, options) - start_s, 0.4 * own, 0.05)
         pcm = decode_pcm(ffmpeg, clips[sub.index])
         dur = len(pcm) / 2 / RATE
         sp = speed_for(dur, slot, options.max_speed)
@@ -269,7 +312,11 @@ def build_dub_track(
             pcm = decode_pcm(ffmpeg, clips[sub.index], sp)
             report.sped_up += 1
             report.max_factor = max(report.max_factor, sp)
-        watermark = place_clip(buf, _as_samples(pcm), int(round(sub.start * RATE)), watermark)
+        samples = fade_edges(_as_samples(pcm), int(FADE_SECONDS * RATE))
+        pos = int(round(start_s * RATE))
+        if pos < watermark:
+            report.still_overlap.append(sub.index)
+        watermark = place_clip(buf, samples, pos, watermark)
         report.placed += 1
         if on_progress:
             on_progress((i + 1) / len(todo))
@@ -366,6 +413,9 @@ def prepare_dub_audio(
     if rep.over_cap:
         warnings.append("Cần tua nhanh hơn trần x%.1f nên giọng tràn qua mốc kết thúc ở phụ đề: %s."
                         % (options.max_speed, ", ".join(map(str, rep.over_cap))))
+    if rep.still_overlap:
+        warnings.append("Giọng vẫn đè lên câu trước ở phụ đề: %s (hãy nâng trần tua nhanh hoặc rút gọn lời dịch)."
+                        % ", ".join(map(str, rep.still_overlap)))
     if rep.placed == 0:
         return None, rep, warnings
     mixed = workdir / "dub_mix.m4a"
