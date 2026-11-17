@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 import threading
 import time
 import urllib.error
@@ -135,26 +136,49 @@ def _parse_verdicts(text: str) -> dict[int, tuple[bool, str]]:
     return out
 
 
-def _clean_key(api_key: str) -> str:
-    """Làm sạch key dán từ Secrets/Cài đặt: bỏ mọi khoảng trắng/xuống dòng (kể cả ở giữa), dấu nháy bao quanh
-    và tiền tố 'GEMINI_API_KEY='. Key Gemini chỉ gồm chữ, số, '-' và '_'."""
-    key = "".join((api_key or "").split())
+def _clean_key(raw: str) -> str:
+    """Làm sạch một key: bỏ khoảng trắng, dấu nháy bao quanh và tiền tố 'GEMINI_API_KEY='."""
+    key = "".join((raw or "").split())
     if "=" in key:
         key = key.rsplit("=", 1)[1]
     return key.strip("\"'`")
 
 
+def _valid_key(key: str) -> bool:
+    """Key Gemini chỉ gồm chữ, số, '-' và '_' (header HTTP không nhận ký tự lạ)."""
+    return bool(key) and key.isascii() and all(c.isalnum() or c in "-_" for c in key)
+
+
+def parse_keys(raw: str) -> list[str]:
+    """Tách danh sách key từ chuỗi nhập: mỗi key một dòng (cũng nhận dấu phẩy/chấm phẩy). Bỏ dòng trống, key trùng
+    và key sai định dạng (chỉ ghi log số thứ tự, không in key)."""
+    keys: list[str] = []
+    for n, part in enumerate(re.split(r"[\r\n,;]+", raw or ""), 1):
+        key = _clean_key(part)
+        if not key:
+            continue
+        if not _valid_key(key):
+            log.warning("Bỏ qua API key Gemini thứ %d: có ký tự không hợp lệ", n)
+            continue
+        if key not in keys:
+            keys.append(key)
+    return keys
+
+
 def gemini_classifier(api_key: str, model: str = DEFAULT_MODEL) -> Classifier:
-    """Trả về hàm phân loại dùng Gemini với key và model đã cho."""
-    key = _clean_key(api_key)
-    if not key:
+    """Trả về hàm phân loại dùng Gemini. `api_key` có thể là nhiều key, mỗi key một dòng: các lượt gọi được chia đều
+    (xoay vòng) giữa các key, và key nào hết quota/lỗi thì chuyển ngay sang key kế tiếp."""
+    if not (api_key or "").strip():
         raise DubFilterError("Chưa có API key Gemini. Vào Cài đặt > Lồng tiếng để nhập (hoặc biến môi trường GEMINI_API_KEY).", 1)
-    if not (key.isascii() and all(c.isalnum() or c in "-_" for c in key)):
-        # Không in key ra thông báo. Header HTTP không nhận ký tự lạ nên thử lại cũng vô ích.
+    keys = parse_keys(api_key)
+    if not keys:
+        # Không in key ra thông báo. Thử lại cũng vô ích.
         raise DubFilterError(
-            "API key Gemini có ký tự không hợp lệ (có thể dán nhầm dấu nháy, chữ có dấu hoặc ký tự lạ). "
-            "Hãy tạo lại key rồi dán lại vào Secrets GEMINI_API_KEY (hoặc Cài đặt > Lồng tiếng).", 1)
+            "Không có API key Gemini hợp lệ (key chỉ gồm chữ, số, '-' và '_'; mỗi key một dòng). "
+            "Hãy kiểm tra lại Secrets GEMINI_API_KEY (hoặc Cài đặt > Lồng tiếng).", 1)
     url = ENDPOINT.format(model=(model or DEFAULT_MODEL).strip())
+    lock = threading.Lock()
+    turn = [0]   # lượt gọi kế tiếp bắt đầu từ key nào
 
     def classify(lines: list[dict], before: list[dict], after: list[dict]) -> dict[int, tuple[bool, str]]:
         body = {
@@ -163,16 +187,29 @@ def gemini_classifier(api_key: str, model: str = DEFAULT_MODEL) -> Classifier:
                 {"context_before": before, "lines": lines, "context_after": after}, ensure_ascii=False)}]}],
             "generationConfig": {"responseMimeType": "application/json", "responseSchema": RESPONSE_SCHEMA},
         }
-        try:
-            return _parse_verdicts(_response_text(_post_json(url, body, key)))
-        except urllib.error.HTTPError as exc:
-            # 400/401/403/404: key sai, model sai, yêu cầu sai... thử lại cũng vô ích. 429/5xx: tạm thời, thử lại mãi.
-            permanent = exc.code in (400, 401, 403, 404)
-            raise DubFilterError(f"HTTP {exc.code}: {_http_message(exc)}", 1 if permanent else None) from exc
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            raise DubFilterError(f"lỗi mạng: {exc}") from exc
-        except ValueError as exc:   # HTTP 200 nhưng thân không phải JSON
-            raise DubFilterError(f"Gemini trả về dữ liệu hỏng: {exc}", BAD_RESPONSE_TRIES) from exc
+        with lock:
+            first = turn[0] % len(keys)
+            turn[0] += 1
+        last: DubFilterError | None = None
+        temporary = False
+        for k in range(len(keys)):
+            key = keys[(first + k) % len(keys)]
+            try:
+                return _parse_verdicts(_response_text(_post_json(url, body, key)))
+            except urllib.error.HTTPError as exc:
+                # 400/401/403/404: key sai, model sai... 429/5xx: hết quota hoặc server bận (tạm thời).
+                # Lỗi theo key thì thử key kế tiếp; hết key mà có lỗi tạm thời thì thử lại mãi, toàn lỗi vĩnh viễn thì dừng.
+                permanent = exc.code in (400, 401, 403, 404)
+                temporary = temporary or not permanent
+                last = DubFilterError(f"HTTP {exc.code}: {_http_message(exc)}", 1 if permanent else None)
+                last.__cause__ = exc
+            except (urllib.error.URLError, TimeoutError, OSError) as exc:
+                raise DubFilterError(f"lỗi mạng: {exc}") from exc
+            except ValueError as exc:   # HTTP 200 nhưng thân không phải JSON
+                raise DubFilterError(f"Gemini trả về dữ liệu hỏng: {exc}", BAD_RESPONSE_TRIES) from exc
+        assert last is not None
+        last.max_tries = None if temporary else 1
+        raise last
 
     return classify
 

@@ -240,8 +240,8 @@ def test_gemini_classifier_requires_key():
     assert ei.value.max_tries == 1
 
 
-@pytest.mark.parametrize("pasted", ["AIzaSyABC-def_123\n", "  AIzaSyABC-def_123  ", "AIzaSyABC-def\n_123",
-                                    '"AIzaSyABC-def_123"', "GEMINI_API_KEY=AIzaSyABC-def_123", "AIzaSyABC-def_123\r\n"])
+@pytest.mark.parametrize("pasted", ["AIzaSyABC-def_123\n", "  AIzaSyABC-def_123  ", '"AIzaSyABC-def_123"',
+                                    "GEMINI_API_KEY=AIzaSyABC-def_123", "AIzaSyABC-def_123\r\n"])
 def test_gemini_classifier_cleans_pasted_key(monkeypatch, pasted):
     seen = {}
 
@@ -252,6 +252,50 @@ def test_gemini_classifier_cleans_pasted_key(monkeypatch, pasted):
     monkeypatch.setattr(dubfilter, "_post_json", fake_post)
     gemini_classifier(pasted)([{"id": 1, "text": "a", "seconds": 1}], [], [])
     assert seen["key"] == "AIzaSyABC-def_123"
+
+
+def test_parse_keys_one_per_line():
+    raw = "KEY1\r\n\n  KEY2  \n\"KEY3\"\nKEY1\nbad$key\nkhóa-sai\n"
+    assert dubfilter.parse_keys(raw) == ["KEY1", "KEY2", "KEY3"]     # bỏ dòng trống, trùng, sai định dạng
+
+
+def test_gemini_classifier_rotates_keys(monkeypatch):
+    used = []
+
+    def fake_post(url, body, key, timeout=60):
+        used.append(key)
+        return _reply([{"id": 1, "dub": True}])
+
+    monkeypatch.setattr(dubfilter, "_post_json", fake_post)
+    clf = gemini_classifier("K1\nK2\nK3")
+    for _ in range(4):
+        clf([{"id": 1, "text": "a", "seconds": 1}], [], [])
+    assert used == ["K1", "K2", "K3", "K1"]                           # chia đều giữa các key
+
+
+def test_gemini_classifier_falls_over_to_next_key_on_quota(monkeypatch):
+    used = []
+
+    def fake_post(url, body, key, timeout=60):
+        used.append(key)
+        if key in ("K1", "K2"):
+            raise urllib.error.HTTPError(url, 429 if key == "K1" else 403, "x", {}, None)   # K1 hết quota, K2 bị khoá
+        return _reply([{"id": 1, "dub": True}])
+
+    monkeypatch.setattr(dubfilter, "_post_json", fake_post)
+    out = gemini_classifier("K1\nK2\nK3")([{"id": 1, "text": "a", "seconds": 1}], [], [])
+    assert out == {1: (True, "")} and used == ["K1", "K2", "K3"]
+
+
+@pytest.mark.parametrize("codes,permanent", [((429, 429), False), ((429, 403), False), ((403, 401), True)])
+def test_gemini_classifier_all_keys_failed(monkeypatch, codes, permanent):
+    def fail(url, body, key, timeout=60):
+        raise urllib.error.HTTPError(url, codes[0] if key == "K1" else codes[1], "x", {}, None)
+
+    monkeypatch.setattr(dubfilter, "_post_json", fail)
+    with pytest.raises(DubFilterError) as ei:
+        gemini_classifier("K1\nK2")([{"id": 1, "text": "a", "seconds": 1}], [], [])
+    assert ei.value.max_tries == (1 if permanent else None)           # có key chỉ tạm hết quota thì thử lại mãi
 
 
 @pytest.mark.parametrize("bad", ["AIzaSy…ABC", "khóa-sai-có-dấu", "AIza$yABC"])
