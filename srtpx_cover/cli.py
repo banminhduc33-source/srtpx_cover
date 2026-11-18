@@ -22,7 +22,7 @@ from .core.dubfilter import DEFAULT_MODEL as DEFAULT_GEMINI_MODEL, DubFilterErro
 from .core.tts import DEFAULT_VOICE, TtsError, tiktok_synthesizer
 from .core.fonts import FontError, FontSpec, default_font_chain, load_chain, parse_font_path
 from .core.geometry import DEFAULT_MARGIN_PX
-from .core.maincap import DEFAULT_FONT_PX, DEFAULT_WORDS, MainCaptionOptions, apply_main_captions
+from .core.maincap import DEFAULT_WORDS, MainCaptionOptions, apply_main_captions
 from .core.parser import SrtpxError, read_srtpx
 
 APP_DIR = Path(__file__).resolve().parent.parent
@@ -67,8 +67,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-main-captions", action="store_true",
                    help="Tắt chuẩn hóa phụ đề chính (mặc định: nhóm phụ đề cùng vị trí đông nhất dùng chung một hộp cố định, "
                         "chữ cỡ cố định, chia cụm vài chữ; phụ đề phụ giữ nguyên)")
-    p.add_argument("--main-font-px", type=float, default=DEFAULT_FONT_PX,
-                   help=f"Cỡ chữ phụ đề chính (đơn vị toạ độ #res), mặc định {DEFAULT_FONT_PX:g}")
     p.add_argument("--main-words", type=int, default=DEFAULT_WORDS,
                    help=f"Tối đa số chữ mỗi cụm phụ đề chính, mặc định {DEFAULT_WORDS}")
     p.add_argument("--no-vertical", action="store_true",
@@ -148,7 +146,7 @@ def _run(args: argparse.Namespace) -> int:
 
         doc = parsed.document
         if not args.no_main_captions and opts.draw_text:
-            mc_opts = MainCaptionOptions(font_px=args.main_font_px, words_per_chunk=args.main_words)
+            mc_opts = MainCaptionOptions(words_per_chunk=args.main_words)
             doc, mc = apply_main_captions(doc, mc_opts, spoken, chain)
             print(f"[phụ đề chính] {mc.message()}")
 

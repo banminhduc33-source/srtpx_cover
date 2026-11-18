@@ -122,7 +122,7 @@ def test_each_main_subtitle_keeps_its_own_width_but_mean_vertical_with_fixed_fon
     new, info = apply_main_captions(doc)
     assert info.applied and info.n_main == 3 and info.n_total == 4
     main = [s for s in new.subtitles if s.index not in {1, 2, 3, 4}]
-    assert main and all(not s.keyframes and s.font_px == 20.0 for s in main)
+    assert main and all(not s.keyframes and s.font_px is None for s in main)   # cỡ chữ co theo hộp như phụ đề phụ
     y1, y2 = (500 + 502 + 498) / 3, (535 + 538 + 533) / 3
     def wide(x1, x2):   # ngang theo file nhân 1,025 quanh tâm
         c, h = (x1 + x2) / 2, (x2 - x1) * 1.025 / 2
@@ -207,12 +207,12 @@ def test_font_px_is_a_cap_that_scales_with_video_and_still_shrinks_to_small_box(
     assert plan.fits_at(400, 100) and not plan.fits_at(1, 1)
 
 
-def test_filter_script_draws_main_captions_at_exactly_20px_with_each_subtitles_own_black_box():
+def test_filter_script_draws_main_captions_with_each_subtitles_own_black_box_and_fit_to_box_size():
     video = VideoInfo(768, 576, 30, 1, 10.0)
     new, info = apply_main_captions(three_main(), chain=CHAIN)
     script = build_filter_script(new, video, CHAIN, ExportOptions(), Path("/tmp/work"))
     sizes = set(re.findall(r"fontsize='([\d.]+)'", script.text))
-    assert "20" in sizes
+    assert sizes and all(float(x) > 1 for x in sizes)
     boxes = set(re.findall(r"drawbox=x=(\d+):y=(\d+):w=(\d+):h=(\d+)", script.text))
     assert len(boxes) == 4                               # 3 phụ đề chính (ngang riêng, dọc chung) + hộp của chữ bay (phụ)
     assert not script.layers                             # không còn keyframe nên không cần lớp vẽ từng khung
