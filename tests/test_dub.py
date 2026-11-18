@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from srtpx_cover.core.dub import (
-    RATE, DubOptions, atempo_filter, drop_overlaps, is_comment, split_dub_subtitles, build_dub_track, place_clip, prepare_dub_audio, select_dub_subtitles, speed_for,
+    RATE, DubOptions, atempo_filter, drop_overlaps, is_comment, split_dub_subtitles, build_dub_track, place_clip, prepare_dub_audio, select_dub_subtitles, slot_for, speed_for,
 )
 from srtpx_cover.core.parser import read_srtpx
 from srtpx_cover.core.tts import TtsError, clip_path, ensure_clips, split_text
@@ -113,6 +113,16 @@ def test_speed_rules():
     assert atempo_filter(3.0) == "atempo=2.00000,atempo=1.50000"
 
 
+def test_slot_borrows_gap_before_next_subtitle():
+    by = {s.index: s for s in select_dub_subtitles(_sample_doc())}   # 3: 10.167-11.167 | 4: 11.167-11.833 | 5: 15.3-16.233
+    s3, s4, s5 = by[3], by[4], by[5]
+    assert slot_for(s3, s4.start, 20.0) == pytest.approx(s3.end - s3.start)           # liền kề: không có chỗ mượn
+    assert slot_for(s4, s5.start, 20.0) == pytest.approx(s5.start - s4.start - 0.1)   # có khoảng im: mượn, chừa 0.1s
+    assert slot_for(s4, s5.start, 14.0) == pytest.approx(14.0 - s4.start - 0.1)       # không mượn quá hết video
+    assert slot_for(s4, None, 14.0) == pytest.approx(14.0 - s4.start - 0.1)           # câu cuối: mượn tới hết video
+    assert slot_for(s4, s4.start + 0.2, 20.0) == pytest.approx(s4.end - s4.start)     # không bao giờ ngắn hơn khung gốc
+
+
 def test_place_clip_overlap_adds_and_clamps():
     buf = array("h", [0] * 20)
     wm = place_clip(buf, array("h", [30000] * 6), 2, 0)
@@ -183,10 +193,26 @@ def test_track_positions_and_speedup(tmp_path):
 @need_ffmpeg
 def test_over_cap_reported(tmp_path):
     doc = _sample_doc()
-    subs = [s for s in select_dub_subtitles(doc) if s.index == 2]  # khung 0.7s
-    f = tmp_path / "c.mp3"; f.write_bytes(fake_mp3(3.5))           # cần x5
-    rep = build_dub_track(FFMPEG, subs, {2: f}, 14.0, DubOptions(max_speed=2.0), tmp_path / "d.wav")
+    subs = [s for s in select_dub_subtitles(doc) if s.index in (2, 3)]  # câu 2: khung 0.7s, liền ngay câu 3 (không mượn được)
+    clips = {}
+    for i, sec in {2: 3.5, 3: 0.4}.items():                          # câu 2 cần x5
+        clips[i] = tmp_path / f"c{i}.mp3"; clips[i].write_bytes(fake_mp3(sec))
+    rep = build_dub_track(FFMPEG, subs, clips, 14.0, DubOptions(max_speed=2.0), tmp_path / "d.wav")
     assert rep.over_cap == [2] and rep.max_factor == pytest.approx(2.0, rel=0.1)
+
+
+@need_ffmpeg
+def test_voice_borrows_silence_instead_of_speeding_up(tmp_path):
+    doc = _sample_doc()
+    subs = [s for s in select_dub_subtitles(doc) if s.index == 4]   # câu 4: khung 0.67s, phía sau im tới hết video (14s)
+    f = tmp_path / "c4.mp3"; f.write_bytes(fake_mp3(2.0))            # dài gấp 3 khung gốc, nhưng vừa trong khoảng được mượn
+    wav = tmp_path / "d.wav"
+    rep = build_dub_track(FFMPEG, subs, {4: f}, 14.0, DubOptions(max_speed=1.4), wav)
+    assert rep.placed == 1 and rep.sped_up == 0 and not rep.over_cap
+    with wave.open(str(wav)) as w:
+        pcm = array("h"); pcm.frombytes(w.readframes(w.getnframes()))
+    seg = pcm[int((subs[0].end + 0.3) * RATE):int((subs[0].end + 0.8) * RATE)]   # sau mốc kết thúc phụ đề: giọng vẫn đang đọc
+    assert sum(1 for v in seg if abs(v) > 500) > 0.8 * len(seg)
 
 
 @need_ffmpeg

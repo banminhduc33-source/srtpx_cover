@@ -17,7 +17,7 @@ from .core.export import ExportOptions, build_command, build_filter_script, writ
 from .core.ffmpeg_tools import FfmpegError, ffmpeg_major_version, find_tool, probe_video, run_ffmpeg
 from .core.vertical import (VerticalOptions, build_vertical_command, build_vertical_filter, find_logo, logo_size,
                             plan_vertical)
-from .core.dub import DubOptions, prepare_dub_audio
+from .core.dub import DEFAULT_MAX_SPEED, DubOptions, prepare_dub_audio
 from .core.dubfilter import DEFAULT_MODEL as DEFAULT_GEMINI_MODEL, DubFilterError, gemini_classifier
 from .core.tts import DEFAULT_VOICE, TtsError, tiktok_synthesizer
 from .core.fonts import FontError, FontSpec, default_font_chain, load_chain, parse_font_path
@@ -57,7 +57,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dub-comments", action="store_true", help="Lồng cả chú thích (có *, trong ngoặc) và block trùng giờ; mặc định bỏ qua")
     p.add_argument("--orig-volume", type=float, default=0.3, help="Âm lượng âm thanh gốc khi lồng tiếng (0..1), mặc định 0.3")
     p.add_argument("--voice-volume", type=float, default=1.0, help="Âm lượng giọng đọc, mặc định 1.0")
-    p.add_argument("--max-speed", type=float, default=3.0, help="Trần tua nhanh khi giọng dài hơn mốc, mặc định 3.0")
+    p.add_argument("--max-speed", type=float, default=DEFAULT_MAX_SPEED, help=f"Trần tua nhanh khi giọng dài hơn mốc, mặc định {DEFAULT_MAX_SPEED}")
     p.add_argument("--ai-filter", action="store_true",
                    help="Dùng Gemini lọc các dòng không cần lồng (tiếng động, chữ trên màn hình...) trước khi đọc; cần --dub")
     p.add_argument("--gemini-key", default=None, help="API key Gemini (mặc định lấy từ biến môi trường GEMINI_API_KEY)")
