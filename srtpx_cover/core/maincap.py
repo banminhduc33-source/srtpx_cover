@@ -4,9 +4,9 @@ Phim thường có MỘT chỗ đặt phụ đề (cùng vị trí, chỉ lệch
 
 1. Gom các phụ đề theo vị trí (tâm hộp, dung sai theo tỷ lệ khung hình) rồi chọn nhóm ĐÔNG NHẤT làm **phụ đề chính**
    (hòa thì nhóm tổng thời lượng dài hơn, rồi nhóm nằm thấp hơn). Phần còn lại là **phụ đề phụ**, giữ nguyên.
-2. Hộp đen của mỗi phụ đề chính lấy ĐÚNG hộp của chính nó trong file .srtpx (vị trí, rộng, cao của chữ gốc tiếng Trung):
-   chữ được chia thành nhiều cụm nhưng các cụm của một phụ đề dùng chung hộp gốc của phụ đề đó, hộp không bị chia và
-   không bị nới. Các phụ đề chính khác nhau có hộp riêng, không gộp thành một hộp chung cho cả video.
+2. Hộp đen của mỗi phụ đề chính: chiều NGANG (x1, x2) lấy đúng của chính nó trong file .srtpx (chữ gốc tiếng Trung),
+   chiều DỌC (y1, y2) lấy trung bình của cả nhóm phụ đề chính để mọi câu nằm cùng một hàng, cùng cao. Chữ chia thành
+   nhiều cụm nhưng các cụm của một câu dùng chung hộp đó; hộp không bị chia và không bị nới theo chữ.
 3. Chữ vẽ cỡ cố định (mặc định 20px, đơn vị #res), mỗi lần hiện tối đa 5 chữ: câu dài được chia thành nhiều cụm
    nối tiếp nhau trong hộp đó.
 4. Mốc thời gian từng cụm chia theo THỜI LƯỢNG GIỌNG ĐỌC thực tế (`spoken` lấy từ `DubReport.spoken`) chứ không theo
@@ -61,7 +61,7 @@ class MainCaptionInfo:
         if not self.applied or self.box is None:
             return f"Phụ đề chính: không áp dụng ({self.reason})."
         b = self.box
-        s = (f"Phụ đề chính: {self.n_main}/{self.n_total} dòng cùng vị trí -> hộp đen theo từng phụ đề trong file (trung bình {b.width:.0f}x{b.height:.0f} "
+        s = (f"Phụ đề chính: {self.n_main}/{self.n_total} dòng cùng vị trí -> hộp đen: ngang theo từng phụ đề trong file, dọc trung bình ( {b.width:.0f}x{b.height:.0f} "
              f"tại ({(b.x1 + b.x2) / 2:.0f}, {(b.y1 + b.y2) / 2:.0f})), chữ {self.font_px:g}px, "
              f"{self.n_chunks} cụm tối đa {self.words_per_chunk} chữ")
         if self.n_dropped_overlap:
@@ -234,8 +234,12 @@ def apply_main_captions(
         times = chunk_times(weights, s.start, speech_end, t_end)
         plan[id(s)] = [(a, b, " ".join(c)) for (a, b), c in zip(times, chunks)]
 
-    # Hộp thông tin (chỉ để báo cáo): trung bình hộp cả nhóm. Hộp vẽ là hộp riêng của từng phụ đề trong file .srtpx.
+    # Chiều dọc = trung bình cả nhóm; chiều ngang giữ riêng từng phụ đề theo file .srtpx (không nới theo chữ).
     fixed = _mean_box([_rest_box(s) for s in members])
+
+    def own_box(sub: Subtitle) -> Box:
+        r = _rest_box(sub)
+        return Box(r.x1, r.x2, fixed.y1, fixed.y2)
 
     next_index = max(s.index for s in subs) + 1
     out: list[Subtitle] = []
@@ -245,10 +249,10 @@ def apply_main_captions(
             out.append(s)
             continue
         if id(s) not in kept_ids:   # không có chữ, hoặc trùng giờ: chỉ che bằng hộp cố định
-            out.append(replace(s, text="", box=_rest_box(s), keyframes=[], font_px=None))
+            out.append(replace(s, text="", box=own_box(s), keyframes=[], font_px=None))
             continue
         for a, b, text in plan[id(s)]:
-            sub = Subtitle(next_index, a, b, text, box=_rest_box(s), font_px=options.font_px)
+            sub = Subtitle(next_index, a, b, text, box=own_box(s), font_px=options.font_px)
             sub.validate()
             out.append(sub)
             next_index += 1
