@@ -205,7 +205,7 @@ class ExportDialog(QDialog):
         self.setWindowTitle("Xuất video")
         self.vertical_box = QCheckBox("Dựng khung 9:16 (nền mờ tối 35% + logo GenshinViet.net)")
         self.vertical_box.setChecked(vertical)
-        self.main_box = QCheckBox("Chuẩn hóa phụ đề chính: hộp đen ngang theo file, dọc trung bình, chữ 20px, 5 chữ mỗi lần (phụ đề phụ giữ nguyên)")
+        self.main_box = QCheckBox("Chuẩn hóa phụ đề chính: hộp đen ngang theo file x1,025, dọc trung bình, chữ 20px, 5 chữ mỗi lần (phụ đề phụ giữ nguyên)")
         self.main_box.setChecked(main_captions)
         self.path = QLineEdit(default_path)
         browse = QPushButton("Chọn…"); browse.clicked.connect(self._browse)

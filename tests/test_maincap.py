@@ -26,6 +26,12 @@ def mk(i, a, b, text, x1=200, x2=560, y1=500, y2=535, keyframes=None):
     return Subtitle(i, a, b, text, box=Box(x1, x2, y1, y2))
 
 
+def widen(x1, x2):
+    """Ngang theo file nhân 1,025 quanh tâm -> (x1, x2)."""
+    c, h = (x1 + x2) / 2, (x2 - x1) * 1.025 / 2
+    return c - h, c + h
+
+
 def doc_of(*subs):
     return SrtpxDocument(res=RES, subtitles=list(subs))
 
@@ -118,10 +124,13 @@ def test_each_main_subtitle_keeps_its_own_width_but_mean_vertical_with_fixed_fon
     main = [s for s in new.subtitles if s.index not in {1, 2, 3, 4}]
     assert main and all(not s.keyframes and s.font_px == 20.0 for s in main)
     y1, y2 = (500 + 502 + 498) / 3, (535 + 538 + 533) / 3
-    own = {1: Box(200, 560, y1, y2), 2: Box(210, 540, y1, y2), 3: Box(190, 570, y1, y2)}
+    def wide(x1, x2):   # ngang theo file nhân 1,025 quanh tâm
+        c, h = (x1 + x2) / 2, (x2 - x1) * 1.025 / 2
+        return Box(c - h, c + h, y1, y2)
+    own = {1: wide(200, 560), 2: wide(210, 540), 3: wide(190, 570)}
     for idx, text_part in ((1, "một hai"), (1, "sáu bảy"), (2, "Xin chào"), (3, "Câu cuối nhé")):
         s = next(x for x in main if x.text.startswith(text_part))
-        assert s.box == own[idx]                            # ngang theo file, dọc trung bình
+        assert s.box == own[idx]                            # ngang theo file x1,025, dọc trung bình
     assert len({s.box for s in main}) == 3
     fly = [s for s in new.subtitles if s.text == "Chữ bay"]
     assert len(fly) == 1 and fly[0] == doc.subtitles[3] and fly[0].font_px is None
@@ -169,7 +178,7 @@ def test_overlapping_main_blocks_keep_box_but_lose_text():
     new, info = apply_main_captions(doc)
     assert info.n_dropped_overlap == 1
     dropped = [s for s in new.subtitles if s.index == 2][0]
-    assert dropped.text == "" and dropped.box == Box(200, 560, *(info.box.y1, info.box.y2)) and dropped.font_px is None
+    assert dropped.text == "" and (dropped.box.x1, dropped.box.x2) == pytest.approx(widen(200, 560)) and dropped.box.y1 == info.box.y1 and dropped.font_px is None
     assert [s.text for s in new.subtitles if s.text] == ["câu chính", "câu kế"]
 
 
@@ -177,13 +186,13 @@ def test_empty_text_subtitle_in_main_position_is_still_covered_by_its_own_box():
     doc = doc_of(mk(1, 0.0, 1.0, "a b"), mk(2, 1.0, 2.0, "", 190, 570, 498, 533), mk(3, 2.0, 3.0, "c d"))
     new, info = apply_main_captions(doc)
     empty = [s for s in new.subtitles if s.index == 2][0]
-    assert empty.text == "" and empty.box == Box(190, 570, *(info.box.y1, info.box.y2)) and (empty.start, empty.end) == (1.0, 2.0)
+    assert empty.text == "" and (empty.box.x1, empty.box.x2) == pytest.approx(widen(190, 570)) and empty.box.y1 == info.box.y1 and (empty.start, empty.end) == (1.0, 2.0)
 
 
 def test_box_is_never_grown_or_split_by_chunks():
     small = doc_of(*[mk(i, i, i + 1, "abcde fghij klmno pqrst uvwxy", 300, 360, 500, 520) for i in range(1, 4)])
     new, _ = apply_main_captions(small, chain=CHAIN)
-    assert all(s.box == Box(300, 360, 500, 520) for s in new.subtitles)   # không nới theo chữ
+    assert all((s.box.x1, s.box.x2) == pytest.approx(widen(300, 360)) and (s.box.y1, s.box.y2) == (500, 520) for s in new.subtitles)   # không nới theo chữ
 
 
 # ------------------------------------------------------------------ vẽ ra
