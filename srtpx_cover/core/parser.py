@@ -4,6 +4,9 @@ Quy ước đã chọn (ghi trong tóm tắt Mốc 1):
 - Dòng "#" chỉ là chú thích khi nằm NGOÀI nội dung phụ đề (trước block đầu hoặc sau
   dòng Độ rộng/Vị trí/KF), vì nội dung phụ đề có thể bắt đầu bằng "#".
 - Có KF thì bỏ qua dòng Độ rộng/Vị trí (mô hình chỉ giữ keyframe).
+- Hộp 4 góc (chữ nghiêng/chạy chéo): "Góc: ax ay bx by cx cy dx dy" (trên-trái, trên-phải, dưới-phải, dưới-trái)
+  cho phụ đề hộp cố định; "KG <giây>s: 8 số" đi kèm dòng KF cùng giờ cho phụ đề có keyframe. Độ rộng/Vị trí/KF
+  vẫn là hộp bao nên phần mềm cũ bỏ qua dòng Góc/KG vẫn che được (bằng hộp chữ nhật).
 - Mép x1>x2 hoặc y1>y2 được tự đổi chỗ kèm cảnh báo; giờ kết thúc <= giờ bắt đầu
   chỉ cảnh báo (vẫn giữ block để người dùng sửa).
 """
@@ -35,6 +38,8 @@ _ARROW_RE = re.compile(r"-+>")
 _WIDTH_RE = re.compile(r"^\s*Độ\s*rộng\s*[:：]", re.IGNORECASE)
 _POS_RE = re.compile(r"^\s*Vị\s*trí\s*[:：]", re.IGNORECASE)
 _KF_RE = re.compile(r"^\s*KF\s*(\d+(?:[.,]\d+)?)\s*s?\s*[:：]?\s*(.*)$", re.IGNORECASE)
+_QUAD_RE = re.compile(r"^\s*G[oó]c\s*[:：]\s*(.*)$", re.IGNORECASE)
+_KG_RE = re.compile(r"^\s*KG\s*(\d+(?:[.,]\d+)?)\s*s?\s*[:：]?\s*(.*)$", re.IGNORECASE)
 _PAREN_RE = re.compile(r"\([^)]*\)|（[^）]*）")
 _PAIR_RE = re.compile(rf"^\s*({_NUM})\s*(?:px)?\s*[-–—~]\s*({_NUM})\s*(?:px)?\s*$", re.IGNORECASE)
 _SPLIT_LINES_RE = re.compile(r"\r\n|\r|\n")
@@ -80,6 +85,15 @@ def _parse_four(value: str) -> tuple[float, float, float, float] | None:
         return None
     a, b, c, d = (_to_float(t) for t in tokens)
     return a, b, c, d
+
+
+def _parse_quad(value: str) -> tuple[float, ...] | None:
+    """Đọc 8 số 'ax ay bx by cx cy dx dy' (cách nhau bằng khoảng trắng/dấu , ;; số thập phân dùng dấu chấm)."""
+    cleaned = re.sub(r"px", "", _PAREN_RE.sub("", value), flags=re.IGNORECASE)
+    tokens = re.findall(r"-?\d+(?:\.\d+)?", cleaned)
+    if len(tokens) != 8:
+        return None
+    return tuple(float(t) for t in tokens)
 
 
 def _ordered_box(x1: float, x2: float, y1: float, y2: float) -> tuple[Box, bool]:
@@ -206,12 +220,30 @@ def _parse_block(
 
     # Phần metadata sau nội dung.
     keyframes: dict[float, Keyframe] = {}
+    quad_fixed: tuple[float, ...] | None = None
+    quad_kf: dict[float, tuple[float, ...]] = {}
     for i in range(content_end, region_end):
         line = norm[i]
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
         if i == width_idx or i == pos_idx:
+            continue
+        qm = _QUAD_RE.match(line)
+        if qm:
+            q = _parse_quad(qm.group(1))
+            if q is None:
+                warnings.append(ParseWarning(i + 1, f"Phụ đề {index}: dòng Góc cần 8 số, bỏ qua dòng này."))
+            else:
+                quad_fixed = q
+            continue
+        gm = _KG_RE.match(line)
+        if gm:
+            q = _parse_quad(gm.group(2))
+            if q is None:
+                warnings.append(ParseWarning(i + 1, f"Phụ đề {index}: dòng KG cần 8 số, bỏ qua dòng này."))
+            else:
+                quad_kf[_to_float(gm.group(1))] = q
             continue
         km = _KF_RE.match(line)
         if km:
@@ -230,6 +262,11 @@ def _parse_block(
         warnings.append(ParseWarning(i + 1, f"Phụ đề {index}: dòng không nhận dạng được, bỏ qua."))
 
     if keyframes:
+        for t, q in quad_kf.items():
+            if t in keyframes:
+                keyframes[t] = Keyframe(t, Box.from_quad(q))
+            else:
+                warnings.append(ParseWarning(content_end + 1, f"Phụ đề {index}: dòng KG {t}s không có keyframe KF cùng giờ, bỏ qua."))
         kfs = [keyframes[t] for t in sorted(keyframes)]
         return Subtitle(index, start, end, text, None, kfs)
 
@@ -249,6 +286,8 @@ def _parse_block(
     box, swapped = _ordered_box(xs[0], xs[1], ys[0], ys[1])
     if swapped:
         warnings.append(ParseWarning(width_idx + 1, f"Phụ đề {index}: mép bị ngược, đã đổi chỗ."))
+    if quad_fixed is not None:
+        box = Box.from_quad(quad_fixed)
     return Subtitle(index, start, end, text, box, [])
 
 
@@ -295,12 +334,16 @@ def write_srtpx(doc: SrtpxDocument) -> str:
         b = sub.first_box
         out.append(f"Độ rộng: {_fmt_num(b.x1)}px - {_fmt_num(b.x2)}px")
         out.append(f"Vị trí: {_fmt_num(b.y1)}px - {_fmt_num(b.y2)}px")
+        if not sub.keyframes and b.quad:
+            out.append("Góc: " + " ".join(_fmt_num(v) for v in b.quad))
         for kf in sub.keyframes:
             kb = kf.box
             out.append(
                 f"KF {_fmt_seconds(kf.time)}s: "
                 f"{_fmt_num(kb.x1)} {_fmt_num(kb.x2)} {_fmt_num(kb.y1)} {_fmt_num(kb.y2)}"
             )
+            if kb.quad:
+                out.append(f"KG {_fmt_seconds(kf.time)}s: " + " ".join(_fmt_num(v) for v in kb.quad))
         out.append("")
     return "\n".join(out)
 

@@ -5,12 +5,15 @@ core/preview.py đặt thẳng vào scene, và view tự scale khi cửa sổ co
 """
 from __future__ import annotations
 
+import math
+
 from PySide6.QtCore import QPointF, QRectF, QSizeF, Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QFont, QFontDatabase, QPainter, QPen
+from PySide6.QtGui import QBrush, QColor, QFont, QFontDatabase, QPainter, QPen, QPolygonF
 from PySide6.QtMultimediaWidgets import QGraphicsVideoItem
 from PySide6.QtWidgets import (
     QFrame,
     QGraphicsItem,
+    QGraphicsPolygonItem,
     QGraphicsRectItem,
     QGraphicsScene,
     QGraphicsSimpleTextItem,
@@ -136,14 +139,14 @@ class VideoView(QGraphicsView):
         self._overlay_key = key
         for n, it in enumerate(items):
             z = _Z_BASE + 2 * n  # phụ đề sau vẽ đè phụ đề trước, giống thứ tự filter khi xuất
-            box = QGraphicsRectItem(QRectF(it.box.x1, it.box.y1, it.box.w, it.box.h))
+            box = self._shape_item(it)             # hộp chữ nhật, hoặc đa giác 4 góc (chữ nghiêng/chạy chéo)
             box.setBrush(QBrush(Qt.GlobalColor.black))   # đục 100%
             box.setPen(QPen(Qt.PenStyle.NoPen))
             box.setZValue(z)
             self._add(box)
             self._add_text(it, z + 1)
             if it.row == selected_row:
-                outline = QGraphicsRectItem(QRectF(it.box.x1, it.box.y1, it.box.w, it.box.h))
+                outline = self._shape_item(it)
                 pen = QPen(SELECT_COLOR)
                 pen.setWidth(2)
                 pen.setCosmetic(True)  # dày 2px màn hình bất kể mức zoom
@@ -153,6 +156,13 @@ class VideoView(QGraphicsView):
                 self._add(outline)
                 if editable:
                     self._add_handles(it)
+
+    @staticmethod
+    def _shape_item(it: PreviewItem) -> QGraphicsItem:
+        if it.quad:
+            q = it.quad
+            return QGraphicsPolygonItem(QPolygonF([QPointF(q[i], q[i + 1]) for i in (0, 2, 4, 6)]))
+        return QGraphicsRectItem(QRectF(it.box.x1, it.box.y1, it.box.w, it.box.h))
 
     def _zoom(self) -> float:
         return self.transform().m11() or 1.0
@@ -249,8 +259,16 @@ class VideoView(QGraphicsView):
             text.setFont(font)
             text.setBrush(QBrush(Qt.GlobalColor.white))
             br = text.boundingRect()
-            text.setScale(k)
-            text.setPos(it.cx - br.width() * k / 2, it.line_center_y(j) - br.height() * k / 2)
+            if it.quad:                     # chữ nghiêng theo hộp: co giãn + xoay quanh TÂM dòng chữ
+                a = math.radians(it.angle)
+                d = it.line_center_y(j) - it.cy
+                text.setTransformOriginPoint(br.width() / 2, br.height() / 2)
+                text.setScale(k)
+                text.setRotation(it.angle)
+                text.setPos(it.cx - d * math.sin(a) - br.width() / 2, it.cy + d * math.cos(a) - br.height() / 2)
+            else:
+                text.setScale(k)
+                text.setPos(it.cx - br.width() * k / 2, it.line_center_y(j) - br.height() * k / 2)
             text.setZValue(z)
             self._add(text)
 

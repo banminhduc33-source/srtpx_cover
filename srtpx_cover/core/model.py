@@ -15,6 +15,18 @@ class Box:
     x2: float
     y1: float
     y2: float
+    # Hộp 4 góc (chữ nghiêng/chạy chéo): (ax, ay, bx, by, cx, cy, dx, dy) = trên-trái, trên-phải, dưới-phải, dưới-trái,
+    # cùng toạ độ #res. Khi có, x1..y2 LUÔN là hộp bao của 4 góc (mọi chỗ chỉ cần hộp chữ nhật vẫn chạy đúng).
+    quad: tuple[float, ...] | None = None
+
+    @classmethod
+    def from_quad(cls, quad: "tuple[float, ...] | list[float]") -> "Box":
+        """Hộp 4 góc từ 8 số; x1..y2 = hộp bao."""
+        q = tuple(float(v) for v in quad)
+        if len(q) != 8:
+            raise ValueError("Hộp 4 góc cần đúng 8 số (ax ay bx by cx cy dx dy).")
+        xs, ys = q[0::2], q[1::2]
+        return cls(min(xs), max(xs), min(ys), max(ys), q)
 
     @property
     def width(self) -> float:

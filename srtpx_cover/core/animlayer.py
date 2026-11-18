@@ -15,6 +15,7 @@ from typing import Callable
 from PIL import Image, ImageDraw, ImageFont
 
 from .fonts import LINE_HEIGHT_FACTOR
+from .geometry import quad_dims
 
 SS = 8  # hệ số siêu mẫu
 
@@ -31,8 +32,10 @@ class AnimLayer:
     oy: int
     cw: int
     ch: int
-    # hàm theo khung k -> (x1, x2, y1, y2, cỡ chữ) đều là số thực theo điểm ảnh video
-    geometry: Callable[[int], tuple[float, float, float, float, float]] = field(repr=False, default=None)  # type: ignore[assignment]
+    # hàm theo khung k -> (x1, x2, y1, y2, cỡ chữ[, quad]) đều là số thực theo điểm ảnh video.
+    # x1..y2 là hộp bao; quad (8 số ax ay bx by cx cy dx dy) nếu có thì hộp đen là ĐA GIÁC 4 góc đó và chữ xoay theo
+    # hướng cạnh trên/dưới, căn giữa tại tâm 4 góc.
+    geometry: Callable[[int], tuple] = field(repr=False, default=None)  # type: ignore[assignment]
 
     @property
     def pattern(self) -> str:
@@ -65,31 +68,41 @@ class AnimLayer:
         sizes = [g[4] for g in geoms.values()]
         big = int(min(400, max(120, round(max(sizes) * 8))))
         pad = int(min(2000, math.ceil(4 * big / max(min(sizes), 1.0))) + 8)
-        masks = self._line_masks(big, pad)
+        masks = self._line_masks(big, pad) if any(self.lines) else []
         cache: dict[tuple, bytes] = {}
         for k in range(self.k0, self.k1 + 1):
-            x1, x2, y1, y2, size = geoms[k]
-            key = tuple(round(v, 3) for v in (x1, x2, y1, y2, size))
+            x1, x2, y1, y2, size = geoms[k][:5]
+            quad = geoms[k][5] if len(geoms[k]) > 5 else None
+            key = tuple(round(v, 3) for v in (x1, x2, y1, y2, size)) + (tuple(round(v, 3) for v in quad) if quad else ())
             path = self.directory / f"f{k - self.k0:05d}.png"
             if key in cache:
                 path.write_bytes(cache[key])
                 continue
             # hộp: vẽ ở SS lần rồi thu nhỏ -> mép hộp có độ phủ phân số, di chuyển liên tục
             boxbig = Image.new("RGBA", (self.cw * SS, self.ch * SS), (0, 0, 0, 0))
-            ImageDraw.Draw(boxbig).rectangle(
-                [round((x1 - self.ox) * SS), round((y1 - self.oy) * SS),
-                 round((x2 - self.ox) * SS) - 1, round((y2 - self.oy) * SS) - 1],
-                fill=(0, 0, 0, 255),
-            )
+            if quad:                         # hộp 4 góc: đa giác, toạ độ số thực x SS
+                ImageDraw.Draw(boxbig).polygon(
+                    [(round((quad[i] - self.ox) * SS), round((quad[i + 1] - self.oy) * SS)) for i in (0, 2, 4, 6)],
+                    fill=(0, 0, 0, 255))
+            else:
+                ImageDraw.Draw(boxbig).rectangle(
+                    [round((x1 - self.ox) * SS), round((y1 - self.oy) * SS),
+                     round((x2 - self.ox) * SS) - 1, round((y2 - self.oy) * SS) - 1],
+                    fill=(0, 0, 0, 255),
+                )
             layer = boxbig.resize((self.cw, self.ch), Image.Resampling.BOX)
             # chữ: mỗi dòng co về cỡ `size` quanh tâm dòng (số thực), đặt vào lưới điểm ảnh nguyên bằng resize(box=...)
             amask = Image.new("L", (self.cw, self.ch), 0)
             f = size / big
-            cx = (x1 + x2) / 2 - self.ox
+            if quad:
+                qcx, qcy, _w, _h, ang = quad_dims(quad)
+                cx, yc = qcx - self.ox, qcy - self.oy
+            else:
+                cx, yc, ang = (x1 + x2) / 2 - self.ox, (y1 + y2) / 2 - self.oy, 0.0
             for j, (m, mcx, mcy) in enumerate(masks):
                 if m is None:
                     continue
-                cy = (y1 + y2) / 2 - self.oy + (j - (n - 1) / 2) * LINE_HEIGHT_FACTOR * size
+                cy = yc + (j - (n - 1) / 2) * LINE_HEIGHT_FACTOR * size
                 # vùng đích chỉ bao phần chữ (bỏ phần đệm của mặt nạ) + 2px; phần đệm đảm bảo box nguồn luôn nằm trong ảnh
                 hw, hh = (m.width / 2 - pad) * f, (m.height / 2 - pad) * f
                 px0, px1 = math.floor(cx - hw) - 2, math.ceil(cx + hw) + 2
@@ -101,6 +114,8 @@ class AnimLayer:
                 cur = Image.new("L", (self.cw, self.ch), 0)
                 cur.paste(patch, (px0, py0))
                 amask = ImageChops.lighter(amask, cur)
+            if abs(ang) > 0.01:              # chữ nghiêng theo hộp: xoay cả lớp chữ quanh tâm hộp (PIL: dương = ngược chiều kim đồng hồ)
+                amask = amask.rotate(-ang, resample=Image.Resampling.BICUBIC, center=(cx, yc))
             white = Image.new("RGBA", (self.cw, self.ch), (255, 255, 255, 0))
             white.putalpha(amask)
             small = Image.alpha_composite(layer, white)

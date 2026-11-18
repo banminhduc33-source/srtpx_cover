@@ -105,6 +105,21 @@ def _pchip(ts: list[float], vs: list[float], t: float) -> float:
     return vs[-1]  # pragma: no cover
 
 
+def _quad_of(b: Box) -> tuple[float, ...]:
+    """4 góc của hộp: hộp 4 góc thì lấy luôn, hộp chữ nhật thì suy ra (trên-trái, trên-phải, dưới-phải, dưới-trái)."""
+    return b.quad if b.quad else (b.x1, b.y1, b.x2, b.y1, b.x2, b.y2, b.x1, b.y2)
+
+
+def quad_dims(quad: tuple[float, ...]) -> tuple[float, float, float, float, float]:
+    """(tâm_x, tâm_y, rộng, cao, góc_độ) của hộp 4 góc: rộng/cao = trung bình hai cạnh đối; góc = hướng của dòng chữ
+    (trung bình cạnh trên và cạnh dưới, đơn vị độ, dương = nghiêng xuống phải vì y hướng xuống)."""
+    ax, ay, bx, by, cx, cy, dx, dy = quad
+    w = (math.hypot(bx - ax, by - ay) + math.hypot(cx - dx, cy - dy)) / 2
+    h = (math.hypot(dx - ax, dy - ay) + math.hypot(cx - bx, cy - by)) / 2
+    ang = math.degrees(math.atan2(((by - ay) + (cy - dy)) / 2, ((bx - ax) + (cx - dx)) / 2))
+    return (ax + bx + cx + dx) / 4, (ay + by + cy + dy) / 4, w, h, ang
+
+
 def interpolate_box(sub: Subtitle, t: float, smooth: bool = False) -> Box:
     """Hộp (toạ độ #res, chưa scale) tại thời điểm t; nội suy từng giá trị x1,x2,y1,y2.
 
@@ -120,6 +135,20 @@ def interpolate_box(sub: Subtitle, t: float, smooth: bool = False) -> Box:
         return kfs[0].box
     if t >= kfs[-1].time:
         return kfs[-1].box
+    if any(k.box.quad for k in kfs):          # hộp 4 góc: nội suy 8 toạ độ góc (hộp chữ nhật xen kẽ = 4 góc suy ra)
+        ts = [k.time for k in kfs]
+        quads = [_quad_of(k.box) for k in kfs]
+        if smooth and len(kfs) >= 2:
+            q = tuple(_pchip(ts, [qq[i] for qq in quads], t) for i in range(8))
+        else:
+            q = None
+            for a, b, qa, qb in zip(kfs, kfs[1:], quads, quads[1:]):
+                if a.time <= t <= b.time:
+                    f = (t - a.time) / (b.time - a.time)
+                    q = tuple(qa[i] + (qb[i] - qa[i]) * f for i in range(8))
+                    break
+            assert q is not None
+        return Box.from_quad(q)
     if smooth and len(kfs) >= 2:
         ts = [k.time for k in kfs]
         return Box(
@@ -151,6 +180,13 @@ def video_box(
     margin = min(max(margin, 0.0), MAX_MARGIN_PX)
     b = interpolate_box(sub, t, smooth)
     w, h = video_size
+    if b.quad:                                  # hộp 4 góc: scale từng góc, đẩy ra ngoài `margin`, kẹp trong khung hình
+        pts = [(b.quad[i] * scale.sx, b.quad[i + 1] * scale.sy) for i in (0, 2, 4, 6)]
+        mx, my = sum(p[0] for p in pts) / 4, sum(p[1] for p in pts) / 4
+        sgn = lambda v: (v > 0) - (v < 0)
+        pts = [(min(max(x + margin * sgn(x - mx), 0.0), float(w)), min(max(y + margin * sgn(y - my), 0.0), float(h)))
+               for x, y in pts]
+        return Box.from_quad(tuple(v for p in pts for v in p))
     return Box(
         min(max(b.x1 * scale.sx - margin, 0.0), float(w)),
         min(max(b.x2 * scale.sx + margin, 0.0), float(w)),

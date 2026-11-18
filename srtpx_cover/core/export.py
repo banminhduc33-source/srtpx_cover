@@ -24,6 +24,7 @@ from .fonts import FontChoice, FontData, describe_font_warnings
 from .geometry import (
     PixelBox,
     compute_scale,
+    quad_dims,
     frame_time,
     pixel_box,
     video_box,
@@ -151,25 +152,39 @@ def build_filter_script(
         has_text = options.draw_text and bool(sub.text.strip())
         boxes_vary = len({(kf.box.x1, kf.box.x2, kf.box.y1, kf.box.y2) for kf in sub.keyframes}) > 1
 
+        # --- hộp 4 góc (chữ nghiêng/chạy chéo): drawbox chỉ vẽ được hình chữ nhật, nên dùng lớp vẽ từng khung (đa giác)
+        quad_sub = bool(sub.box and sub.box.quad) or any(kf.box.quad for kf in sub.keyframes)
+
+        def _dims(vb):
+            """(rộng, cao) hộp: hộp 4 góc lấy trung bình hai cạnh đối (chữ xoay theo hộp nên so với cạnh, không với hộp bao)."""
+            if vb.quad:
+                return quad_dims(vb.quad)[2:4]
+            return vb.x2 - vb.x1, vb.y2 - vb.y1
+
         # --- phụ đề CÓ keyframe và có chữ: hộp + chữ vẽ chung từng khung ở toạ độ số thực (xem animlayer.py)
-        if has_text and boxes_vary:
-            choice, plan = plan_text(sub, chain)
-            choices[sub.index] = choice
-            for kf in sub.keyframes:
-                vb = video_box(sub, kf.time, scale, options.margin, video.size)
-                if not plan.fits_at(vb.x2 - vb.x1, vb.y2 - vb.y1) and sub.index not in overflow:
-                    overflow.append(sub.index)
+        if (has_text and boxes_vary) or quad_sub:
+            if has_text:
+                choice, plan = plan_text(sub, chain)
+                choices[sub.index] = choice
+                for t_ in [kf.time for kf in sub.keyframes] or [sub.start]:
+                    bw_, bh_ = _dims(video_box(sub, t_, scale, options.margin, video.size))
+                    if not plan.fits_at(bw_, bh_) and sub.index not in overflow:
+                        overflow.append(sub.index)
+            else:
+                choice, plan = None, None
 
             def geom(k: int, sub=sub, plan=plan):
                 vb = video_box(sub, frame_time(k, num, den), scale, options.margin, video.size, options.smooth)
-                return (vb.x1, vb.x2, vb.y1, vb.y2, plan.size_for(vb.x2 - vb.x1, vb.y2 - vb.y1))
+                size_ = plan.size_for(*_dims(vb)) if plan is not None else 1.0
+                return (vb.x1, vb.x2, vb.y1, vb.y2, size_, vb.quad)
 
             all_boxes = [geom(k)[:4] for k in range(k0, k1 + 1)]
             ox, oy, cw, ch = canvas_for(all_boxes)
             lay = AnimLayer(
                 directory=workdir / f"anim{sub.index:04d}",
-                font_path=str(choice.font.spec.path), face_index=choice.font.spec.face_index,
-                lines=plan.lines, k0=k0, k1=k1, ox=ox, oy=oy, cw=cw, ch=ch, geometry=geom,
+                font_path=str(choice.font.spec.path) if choice else "",
+                face_index=choice.font.spec.face_index if choice else 0,
+                lines=plan.lines if plan else (), k0=k0, k1=k1, ox=ox, oy=oy, cw=cw, ch=ch, geometry=geom,
             )
             out.layers.append(lay)
             flush_chain()

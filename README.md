@@ -54,6 +54,16 @@ Xuất xong, app dựng tiếp video dọc **1080x1920** từ video vừa xuất
 - **Logo GenshinViet.net** (`assets/logo_genshinviet.png`) nằm **dưới video đúng 20px**, căn giữa. Video quá cao không còn chỗ thì bỏ logo.
 - Âm thanh giữ nguyên. Thông số (độ mờ, độ sáng, khoảng cách, cỡ logo...) ở `VerticalOptions` trong `core/vertical.py`.
 
+## Hộp 4 góc (phụ đề chạy chéo/nghiêng)
+Một phụ đề có thể là **hình 4 góc** thay vì hình chữ nhật (như hộp A-B-C-D trong editor): hộp đen vẽ đúng đa giác, chữ trắng **xoay theo hướng cạnh trên/dưới** và căn giữa tại tâm 4 góc.
+- Cú pháp trong `.srtpx` (thứ tự góc: trên-trái, trên-phải, dưới-phải, dưới-trái, toạ độ `#res`, số thập phân dùng dấu chấm):
+  - hộp cố định: thêm dòng `Góc: ax ay bx by cx cy dx dy` sau `Vị trí:`;
+  - có keyframe: sau dòng `KF 1.00s: ...` thêm `KG 1.00s: ax ay bx by cx cy dx dy` cùng giờ; giữa các keyframe 8 toạ độ góc được nội suy (PCHIP khi xuất).
+- `Độ rộng / Vị trí / KF` vẫn là **hộp bao** của 4 góc, nên phần mềm cũ bỏ qua dòng `Góc`/`KG` vẫn che được (bằng hộp chữ nhật to hơn).
+- Kéo/đổi cỡ hộp trong preview giữ nguyên hình 4 góc (4 góc được co giãn theo hộp bao). Chưa có tay nắm kéo từng góc riêng.
+- Xuất video: phụ đề 4 góc đi qua lớp vẽ từng khung (như phụ đề có keyframe), mép đa giác mượt dưới 1px.
+- Phía bóc chữ (`hardsub-extract-tool`) sinh sẵn dòng `Góc`/`KG` cho chữ nghiêng: `--tilt-mode quad`.
+
 ## Chữ dính vào hộp
 Chữ luôn co giãn và dời theo hộp đen: hộp phóng to/thu nhỏ/di chuyển theo keyframe thì chữ to/nhỏ/dời theo, mượt (cỡ chữ và vị trí là số thực, không nhảy từng px). Cỡ chữ = min(cao hộp / 1,2 x số dòng, rộng hộp / độ rộng dòng dài nhất).
 

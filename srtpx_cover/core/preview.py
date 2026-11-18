@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from .fonts import FontData, FontChoice, FontError, FontSpec, describe_font_warnings
-from .geometry import PixelBox, compute_scale, is_visible, pixel_box, smallest_pixel_size, video_box
+from .geometry import PixelBox, compute_scale, is_visible, pixel_box, quad_dims, smallest_pixel_size, video_box
 from .layout import LINE_HEIGHT_FACTOR, TextPlan, plan_text
 from .model import SrtpxDocument
 
@@ -28,6 +28,8 @@ class PreviewItem:
     cx: float                   # tâm hộp (chưa làm tròn) ở thời điểm này, dùng căn giữa chữ
     cy: float
     fits: bool
+    quad: tuple[float, ...] | None = None   # hộp 4 góc (điểm ảnh video thực); None = hộp chữ nhật `box`
+    angle: float = 0.0                      # độ nghiêng của dòng chữ (độ) khi có hộp 4 góc
 
     def line_center_y(self, j: int) -> float:
         """Toạ độ y tâm dòng thứ j (khớp công thức drawtext: lệch (j-(n-1)/2) * line_height)."""
@@ -102,16 +104,17 @@ class PreviewModel:
                 continue  # bị kẹp hết ra ngoài khung hình (giống bộ xuất)
             vb = video_box(sub, t, self.scale, self.margin, self.video_size)
             plan = self._plans.get(row)
+            qcx, qcy, bw, bh, ang = (*quad_dims(vb.quad),) if vb.quad else (
+                (vb.x1 + vb.x2) / 2, (vb.y1 + vb.y2) / 2, vb.x2 - vb.x1, vb.y2 - vb.y1, 0.0)
             if plan is None:
                 lines: tuple[str, ...] = ()
                 size, lh, font, fits = 0.0, 0.0, None, True
             else:
                 choice, tp = plan
-                bw, bh = vb.x2 - vb.x1, vb.y2 - vb.y1
                 size = tp.size_for(bw, bh)       # chữ dính hộp: cỡ chữ liên tục theo hộp tại giờ t
                 lines, lh, font, fits = tp.lines, LINE_HEIGHT_FACTOR * size, choice.font.spec, tp.fits_at(bw, bh)
             out.append(PreviewItem(
                 row, sub.index, box, lines, size, lh, font,
-                (vb.x1 + vb.x2) / 2, (vb.y1 + vb.y2) / 2, fits,
+                qcx, qcy, fits, vb.quad, ang,
             ))
         return out

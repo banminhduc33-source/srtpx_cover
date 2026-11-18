@@ -78,7 +78,13 @@ def apply_drag(box: Box, mode: str, dx: float, dy: float, res_size: tuple[float,
             y1 = min(max(y1 + dy, 0.0), y2 - min_size)
         if "s" in mode:
             y2 = max(min(y2 + dy, H), y1 + min_size)
-    return Box(round(x1, 1), round(x2, 1), round(y1, 1), round(y2, 1))
+    nb = Box(round(x1, 1), round(x2, 1), round(y1, 1), round(y2, 1))
+    if box.quad and box.width > 0 and box.height > 0:   # hộp 4 góc: ánh xạ 4 góc từ hộp bao cũ sang hộp bao mới
+        sx, sy = (x2 - x1) / box.width, (y2 - y1) / box.height
+        q = tuple(round(x1 + (box.quad[i] - box.x1) * sx, 1) if i % 2 == 0 else round(y1 + (box.quad[i] - box.y1) * sy, 1)
+                  for i in range(8))
+        return Box(nb.x1, nb.x2, nb.y1, nb.y2, q)
+    return nb
 
 
 # ---------------------------------------------------------------- Keyframe (mốc 5)
