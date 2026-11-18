@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
 from ..core.dub import apply_ai_filter, drop_overlaps, prepare_dub_audio, split_dub_subtitles
 from ..core.tts import TtsError, ensure_clips, tiktok_synthesizer
 from ..core.export import ExportOptions, build_command, build_filter_script, write_textfiles
+from ..core.maincap import MainCaptionOptions, apply_main_captions
 from ..core.ffmpeg_tools import (
     FfmpegError, VideoInfo, build_proxy_command, ffmpeg_major_version, find_tool, probe_video,
 )
@@ -743,7 +744,8 @@ class MainWindow(QMainWindow):
         info = self.video_info
         default = str(Path(self.video_path).with_name(Path(self.video_path).stem + "_che.mp4"))
         vertical_on = str(self.settings.value("export/vertical", "true")).lower() in ("true", "1")
-        dlg = ExportDialog(info.duration, str(self.settings.value("dirs/export", default)), self, vertical_on)
+        main_on = str(self.settings.value("export/main_captions", "true")).lower() in ("true", "1")
+        dlg = ExportDialog(info.duration, str(self.settings.value("dirs/export", default)), self, vertical_on, main_on)
         if not dlg.exec():
             return
         out = dlg.output_path()
@@ -753,6 +755,8 @@ class MainWindow(QMainWindow):
         self.settings.setValue("dirs/export", out)
         vertical = dlg.vertical()
         self.settings.setValue("export/vertical", vertical)
+        main_captions = dlg.main_captions()
+        self.settings.setValue("export/main_captions", main_captions)
         a, b = dlg.segment()
         s = self.settings
         opts = ExportOptions(
@@ -765,7 +769,21 @@ class MainWindow(QMainWindow):
         try:
             ffmpeg = find_tool("ffmpeg")
             chain, font_warnings = self._ensure_chain()
-            script = build_filter_script(self.doc, info, chain, opts, workdir)
+            # Lồng tiếng chạy TRƯỚC (trên phụ đề gốc, đọc nguyên câu): cần biết giọng đọc dài bao lâu để chia mốc chuyển cụm
+            # cho phụ đề chính.
+            mixed, spoken = None, None
+            if dub_enabled(s):
+                res = self._prepare_dub_for_export(info, workdir, ffmpeg)
+                if res is False:
+                    return  # người dùng hủy
+                mixed, spoken = res
+            doc = self.doc
+            if main_captions:
+                doc, mc = apply_main_captions(self.doc, MainCaptionOptions(), spoken, chain)
+                log.info(mc.message())
+                if mc.applied:
+                    self.statusBar().showMessage(mc.message(), 10000)
+            script = build_filter_script(doc, info, chain, opts, workdir)
             warnings = font_warnings + script.warnings
             if warnings:
                 text = "\n".join(warnings[:MAX_WARNING_LINES]) + "\n\nVẫn tiếp tục xuất?"
@@ -777,13 +795,9 @@ class MainWindow(QMainWindow):
             script_path.write_bytes(script.text.encode("utf-8"))
             extra = script.extra_inputs(info.fps_num, info.fps_den)
             audio_map = None
-            if dub_enabled(s):
-                mixed = self._prepare_dub_for_export(info, workdir, ffmpeg)
-                if mixed is False:
-                    return  # người dùng hủy
-                if mixed is not None:
-                    audio_map = f"{1 + len(script.layers)}:a"
-                    extra = [*extra, "-i", str(mixed)]
+            if mixed is not None:
+                audio_map = f"{1 + len(script.layers)}:a"
+                extra = [*extra, "-i", str(mixed)]
             stage1 = str(workdir / "che.mp4") if vertical else out
             cmd = build_command(ffmpeg, self.video_path, script_path, stage1, opts, ffmpeg_major_version(ffmpeg), script.complex,
                                  extra, audio_map)
@@ -807,19 +821,20 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Xuất video", "Đã hủy và xóa file dở.")
 
     def _prepare_dub_for_export(self, info: VideoInfo, workdir: Path, ffmpeg: str):
-        """Dựng âm thanh đã lồng tiếng. Trả về đường dẫn file, None = xuất không lồng tiếng, False = hủy xuất."""
+        """Dựng âm thanh đã lồng tiếng. Trả về (đường dẫn file hoặc None = xuất không lồng tiếng, {chỉ số phụ đề: số giây
+        giọng đọc}), hoặc False = hủy xuất."""
         assert self.doc is not None and self.video_path is not None
         sid = dub_sessionid(self.settings)
         no_dub = QMessageBox.StandardButton.Yes
 
         def ask(text: str):
             if QMessageBox.question(self, "Lồng tiếng", text + "\n\nXuất video KHÔNG lồng tiếng?") == no_dub:
-                return None
+                return None, {}
             return False
 
         if not sid:
             self.statusBar().showMessage("Chưa có sessionid TikTok nên xuất không lồng tiếng (Cài đặt > Lồng tiếng).", 10000)
-            return None
+            return None, {}
         try:
             synth = tiktok_synthesizer(sid)
             ffprobe = find_tool("ffprobe")
@@ -845,7 +860,7 @@ class MainWindow(QMainWindow):
             if QMessageBox.question(self, "Cảnh báo lồng tiếng", text) != QMessageBox.StandardButton.Yes:
                 return False
         self.statusBar().showMessage(report.summary(), 10000)
-        return mixed
+        return mixed, report.spoken
 
     # ------------------------------------------------------------------ phát và tua
     def toggle_play(self) -> None:

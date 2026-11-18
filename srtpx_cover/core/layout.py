@@ -82,27 +82,35 @@ class TextPlan:
 
     lines: tuple[str, ...]
     em_width: float            # chiều rộng (px) của dòng dài nhất ở cỡ chữ 1px (đã gồm hệ số an toàn)
+    fixed_size: float | None = None   # cỡ chữ cố định (px video thực); có thì bỏ qua việc co chữ theo hộp
 
     @property
     def n(self) -> int:
         return len(self.lines)
 
     def size_for(self, box_w: float, box_h: float) -> float:
-        """Cỡ chữ lớn nhất (px, số thực, tối thiểu 1) để mọi dòng vừa hộp box_w x box_h."""
+        """Cỡ chữ lớn nhất (px, số thực, tối thiểu 1) để mọi dòng vừa hộp box_w x box_h.
+        Có `fixed_size` thì luôn trả về đúng cỡ đó."""
+        if self.fixed_size is not None:
+            return self.fixed_size
         s = box_h / (LINE_HEIGHT_FACTOR * self.n)
         if self.em_width > 0:
             s = min(s, box_w / self.em_width)
         return max(1.0, s)
 
     def fits_at(self, box_w: float, box_h: float) -> bool:
-        """False nếu ngay cả ở 1px chữ vẫn tràn hộp."""
-        return (LINE_HEIGHT_FACTOR * self.n <= box_h) and (self.em_width <= box_w)
+        """False nếu ngay cả ở 1px chữ vẫn tràn hộp (cỡ cố định thì: chữ ở đúng cỡ đó có tràn hộp không)."""
+        k = 1.0 if self.fixed_size is None else self.fixed_size
+        return (LINE_HEIGHT_FACTOR * self.n * k <= box_h) and (self.em_width * k <= box_w)
 
 
-def plan_text(sub: Subtitle, chain: Sequence[FontData]) -> tuple[FontChoice, TextPlan]:
-    """Chọn font và tách dòng cho MỘT phụ đề. Cố định suốt thời gian hiển thị."""
+def plan_text(sub: Subtitle, chain: Sequence[FontData], scale_y: float = 1.0) -> tuple[FontChoice, TextPlan]:
+    """Chọn font và tách dòng cho MỘT phụ đề. Cố định suốt thời gian hiển thị.
+
+    `scale_y` (px video thực / toạ độ #res theo chiều dọc) đổi `sub.font_px` sang px của video thực."""
     text = fold_for_font(sub.text, chain)
     choice = choose_font(text, chain)
     lines = tuple(_normalize_lines(text))
     em = max((text_width(choice.font, ln, 1.0) for ln in lines), default=0.0)
-    return choice, TextPlan(lines, em)
+    fixed = None if sub.font_px is None else sub.font_px * scale_y
+    return choice, TextPlan(lines, em, fixed)

@@ -172,6 +172,10 @@ def test_track_positions_and_speedup(tmp_path):
     rep = build_dub_track(FFMPEG, subs, clips, 14.0, DubOptions(max_speed=4.0), wav)
     assert rep.placed == 3 and rep.sped_up == 1 and not rep.over_cap
     assert rep.max_factor == pytest.approx(3.0, rel=0.1)
+    # thời lượng giọng đọc thực tế (sau tua nhanh): câu 2 dài 2.1s tua x3 -> ~0.7s; câu ngắn giữ nguyên
+    # (mp3 giả được đệm thêm ~0.05s khi giải mã nên dung sai 0.1s)
+    assert rep.spoken[2] == pytest.approx(0.7, abs=0.1) and rep.spoken[3] == pytest.approx(0.4, abs=0.1)
+    assert rep.spoken[4] == pytest.approx(0.5, abs=0.1)
 
     with wave.open(str(wav)) as w:
         assert w.getframerate() == RATE and w.getnframes() == 14 * RATE
@@ -209,6 +213,7 @@ def test_voice_borrows_silence_instead_of_speeding_up(tmp_path):
     wav = tmp_path / "d.wav"
     rep = build_dub_track(FFMPEG, subs, {4: f}, 14.0, DubOptions(max_speed=1.4), wav)
     assert rep.placed == 1 and rep.sped_up == 0 and not rep.over_cap
+    assert rep.spoken[4] == pytest.approx(2.0, abs=0.1)              # mượn khoảng im: giọng chiếm đủ 2s, dài hơn khung gốc
     with wave.open(str(wav)) as w:
         pcm = array("h"); pcm.frombytes(w.readframes(w.getnframes()))
     seg = pcm[int((subs[0].end + 0.3) * RATE):int((subs[0].end + 0.8) * RATE)]   # sau mốc kết thúc phụ đề: giọng vẫn đang đọc

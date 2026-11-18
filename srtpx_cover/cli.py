@@ -22,6 +22,7 @@ from .core.dubfilter import DEFAULT_MODEL as DEFAULT_GEMINI_MODEL, DubFilterErro
 from .core.tts import DEFAULT_VOICE, TtsError, tiktok_synthesizer
 from .core.fonts import FontError, FontSpec, default_font_chain, load_chain, parse_font_path
 from .core.geometry import DEFAULT_MARGIN_PX
+from .core.maincap import DEFAULT_FONT_PX, DEFAULT_WORDS, MainCaptionOptions, apply_main_captions
 from .core.parser import SrtpxError, read_srtpx
 
 APP_DIR = Path(__file__).resolve().parent.parent
@@ -63,6 +64,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--gemini-key", default=None, help="API key Gemini (mặc định lấy từ biến môi trường GEMINI_API_KEY)")
     p.add_argument("--gemini-model", default=DEFAULT_GEMINI_MODEL, help=f"Model Gemini để lọc, mặc định {DEFAULT_GEMINI_MODEL}")
     p.add_argument("--tts-cache", default=str(APP_DIR / ".tts_cache"), help="Thư mục cache giọng từng câu")
+    p.add_argument("--no-main-captions", action="store_true",
+                   help="Tắt chuẩn hóa phụ đề chính (mặc định: nhóm phụ đề cùng vị trí đông nhất dùng chung một hộp cố định, "
+                        "chữ cỡ cố định, chia cụm vài chữ; phụ đề phụ giữ nguyên)")
+    p.add_argument("--main-font-px", type=float, default=DEFAULT_FONT_PX,
+                   help=f"Cỡ chữ phụ đề chính (đơn vị toạ độ #res), mặc định {DEFAULT_FONT_PX:g}")
+    p.add_argument("--main-words", type=int, default=DEFAULT_WORDS,
+                   help=f"Tối đa số chữ mỗi cụm phụ đề chính, mặc định {DEFAULT_WORDS}")
     p.add_argument("--no-vertical", action="store_true",
                    help="Không dựng khung 9:16 (mặc định: sau khi xuất, dựng thêm nền mờ + logo thành video dọc 1080x1920)")
     p.add_argument("--dump-filter", metavar="FILE", help="Ghi filter script ra file này để kiểm tra rồi thoát")
@@ -110,19 +118,10 @@ def _run(args: argparse.Namespace) -> int:
                          codec=args.codec, start=args.start, end=args.end)
     workdir = Path(tempfile.mkdtemp(prefix="srtpx_"))
     try:
-        script = build_filter_script(parsed.document, video, chain, opts, workdir)
-        for w in script.warnings:
-            print(f"[cảnh báo] {w}", file=sys.stderr)
-        write_textfiles(script)
-        script_path = workdir / "filter.txt"
-        script_path.write_bytes(script.text.encode("utf-8"))
-        if args.dump_filter:
-            Path(args.dump_filter).write_bytes(script.text.encode("utf-8"))
-            print(f"Đã ghi filter script: {args.dump_filter}")
-            return 0
-        extra = script.extra_inputs(video.fps_num, video.fps_den)
-        audio_map = None
-        if args.dub:
+        # Lồng tiếng chạy TRƯỚC trên phụ đề gốc (đọc nguyên câu): cần biết giọng đọc dài bao lâu thì mới chia được mốc
+        # chuyển cụm cho phụ đề chính. --dump-filter không tạo giọng nên bỏ qua bước này.
+        mixed, spoken = None, None
+        if args.dub and not args.dump_filter:
             sid = args.sessionid or os.environ.get("TIKTOK_SESSIONID", "")
             dub_opts = DubOptions(include_comments=args.dub_comments, max_speed=args.max_speed,
                                   orig_volume=args.orig_volume, voice_volume=args.voice_volume,
@@ -134,6 +133,7 @@ def _run(args: argparse.Namespace) -> int:
             mixed, rep, dub_warnings = prepare_dub_audio(
                 parsed.document, args.video, video.duration, args.voice, tiktok_synthesizer(sid),
                 Path(args.tts_cache), workdir, dub_opts, ffmpeg, ffprobe, classifier=classifier)
+            spoken = rep.spoken
             for w in dub_warnings:
                 print(f"[lồng tiếng] {w}", file=sys.stderr)
             texts = {s.index: " ".join(s.text.split()) for s in parsed.document.subtitles}
@@ -145,9 +145,28 @@ def _run(args: argparse.Namespace) -> int:
             for i in rep.skipped_ai:
                 print(f"[lọc AI] bỏ #{i} ({spans.get(i, '?')}) \"{texts.get(i, '')}\" — {rep.ai_reasons.get(i) or 'không rõ lý do'}")
             print(rep.summary())
-            if mixed is not None:
-                audio_map = f"{1 + len(script.layers)}:a"
-                extra = [*extra, "-i", str(mixed)]
+
+        doc = parsed.document
+        if not args.no_main_captions and opts.draw_text:
+            mc_opts = MainCaptionOptions(font_px=args.main_font_px, words_per_chunk=args.main_words)
+            doc, mc = apply_main_captions(doc, mc_opts, spoken, chain)
+            print(f"[phụ đề chính] {mc.message()}")
+
+        script = build_filter_script(doc, video, chain, opts, workdir)
+        for w in script.warnings:
+            print(f"[cảnh báo] {w}", file=sys.stderr)
+        write_textfiles(script)
+        script_path = workdir / "filter.txt"
+        script_path.write_bytes(script.text.encode("utf-8"))
+        if args.dump_filter:
+            Path(args.dump_filter).write_bytes(script.text.encode("utf-8"))
+            print(f"Đã ghi filter script: {args.dump_filter}")
+            return 0
+        extra = script.extra_inputs(video.fps_num, video.fps_den)
+        audio_map = None
+        if mixed is not None:
+            audio_map = f"{1 + len(script.layers)}:a"
+            extra = [*extra, "-i", str(mixed)]
         vertical = not args.no_vertical
         stage1 = str(workdir / "che.mp4") if vertical else args.output
         cmd = build_command(ffmpeg, args.video, script_path, stage1, opts, ffmpeg_major_version(ffmpeg), script.complex, extra,

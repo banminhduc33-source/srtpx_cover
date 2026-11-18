@@ -49,6 +49,9 @@ class Subtitle:
     text: str
     box: Box | None = None
     keyframes: list[Keyframe] = field(default_factory=list)
+    # Cỡ chữ cố định (đơn vị toạ độ #res). None = co chữ vừa hộp như thường lệ. Chỉ do bước "phụ đề chính"
+    # (core/maincap.py) đặt khi xuất; không ghi vào file .srtpx.
+    font_px: float | None = None
 
     def validate(self) -> None:
         """Ném ValueError nếu vi phạm bất biến ở trên."""
