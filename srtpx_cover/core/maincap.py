@@ -7,7 +7,7 @@ Phim thường có MỘT chỗ đặt phụ đề (cùng vị trí, chỉ lệch
 2. Hộp đen của mỗi phụ đề chính: chiều NGANG (x1, x2) lấy của chính nó trong file .srtpx (chữ gốc tiếng Trung) rồi nhân 1,025 quanh tâm,
    chiều DỌC (y1, y2) lấy trung bình của cả nhóm phụ đề chính để mọi câu nằm cùng một hàng, cùng cao. Chữ chia thành
    nhiều cụm nhưng các cụm của một câu dùng chung hộp đó; hộp không bị chia và không bị nới theo chữ.
-3. Chữ vẽ cỡ tối đa (mặc định 20px, đơn vị #res; hộp nhỏ hơn thì chữ co theo hộp), mỗi lần hiện tối đa 5 chữ: câu dài được chia thành nhiều cụm
+3. Cỡ chữ tính như phụ đề phụ (co vừa hộp, không đặt cỡ riêng), mỗi lần hiện tối đa 5 chữ: câu dài được chia thành nhiều cụm
    nối tiếp nhau trong hộp đó.
 4. Mốc thời gian từng cụm chia theo THỜI LƯỢNG GIỌNG ĐỌC thực tế (`spoken` lấy từ `DubReport.spoken`) chứ không theo
    [start, end] của phụ đề, vì TTS đọc nguyên câu một mạch và có thể bị tua nhanh hoặc mượn khoảng im phía sau. TikTok TTS
@@ -27,7 +27,6 @@ from .dub import drop_overlaps
 from .fonts import FontData
 from .model import Box, SrtpxDocument, Subtitle
 
-DEFAULT_FONT_PX = 20.0
 DEFAULT_WORDS = 5
 BOX_WIDTH_SCALE = 1.025   # chiều ngang hộp đen nhân thêm, giữ nguyên tâm ngang
 
@@ -38,7 +37,6 @@ _CLOSERS = "\"'”’)]}»›」』】》"
 
 @dataclass(frozen=True)
 class MainCaptionOptions:
-    font_px: float = DEFAULT_FONT_PX      # cỡ chữ (đơn vị toạ độ #res)
     words_per_chunk: int = DEFAULT_WORDS  # tối đa số chữ mỗi cụm
     balance: bool = True                  # True: chia đều (11 chữ -> 4+4+3), tránh cụm lẻ 1 chữ; False: 5+5+1 đúng từng chữ
     tol_x_ratio: float = 0.05             # dung sai tâm theo chiều ngang, tỷ lệ chiều rộng khung hình
@@ -55,7 +53,6 @@ class MainCaptionInfo:
     n_chunks: int = 0
     n_dropped_overlap: int = 0            # phụ đề chính trùng giờ: chỉ giữ hộp, bỏ chữ (cùng luật với lồng tiếng)
     box: Box | None = None
-    font_px: float = DEFAULT_FONT_PX
     words_per_chunk: int = DEFAULT_WORDS
 
     def message(self) -> str:
@@ -63,7 +60,7 @@ class MainCaptionInfo:
             return f"Phụ đề chính: không áp dụng ({self.reason})."
         b = self.box
         s = (f"Phụ đề chính: {self.n_main}/{self.n_total} dòng cùng vị trí -> hộp đen: ngang theo từng phụ đề trong file, dọc trung bình ( {b.width:.0f}x{b.height:.0f} "
-             f"tại ({(b.x1 + b.x2) / 2:.0f}, {(b.y1 + b.y2) / 2:.0f})), chữ {self.font_px:g}px, "
+             f"tại ({(b.x1 + b.x2) / 2:.0f}, {(b.y1 + b.y2) / 2:.0f})), "
              f"{self.n_chunks} cụm tối đa {self.words_per_chunk} chữ")
         if self.n_dropped_overlap:
             s += f", {self.n_dropped_overlap} dòng trùng giờ chỉ giữ hộp"
@@ -254,7 +251,7 @@ def apply_main_captions(
             out.append(replace(s, text="", box=own_box(s), keyframes=[], font_px=None))
             continue
         for a, b, text in plan[id(s)]:
-            sub = Subtitle(next_index, a, b, text, box=own_box(s), font_px=options.font_px)
+            sub = Subtitle(next_index, a, b, text, box=own_box(s))
             sub.validate()
             out.append(sub)
             next_index += 1
@@ -262,7 +259,7 @@ def apply_main_captions(
 
     info = MainCaptionInfo(
         True, n_main=len(group), n_total=total, n_chunks=n_chunks,
-        n_dropped_overlap=len(dropped), box=fixed, font_px=options.font_px, words_per_chunk=options.words_per_chunk,
+        n_dropped_overlap=len(dropped), box=fixed, words_per_chunk=options.words_per_chunk,
     )
     return SrtpxDocument(res=doc.res, subtitles=out), info
 
