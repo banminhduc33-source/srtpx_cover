@@ -6,6 +6,8 @@ Quy ước đã chọn (ghi trong tóm tắt Mốc 1):
 - Có KF thì bỏ qua dòng Độ rộng/Vị trí (mô hình chỉ giữ keyframe).
 - Mép x1>x2 hoặc y1>y2 được tự đổi chỗ kèm cảnh báo; giờ kết thúc <= giờ bắt đầu
   chỉ cảnh báo (vẫn giữ block để người dùng sửa).
+- Dòng tuỳ chọn "Đa giác: x0,y0 x1,y1 x2,y2 x3,y3" (4 góc thật của chữ nghiêng, dấu thập phân là '.'): hộp đen vẽ theo
+  đa giác; Độ rộng/Vị trí vẫn là hộp thẳng để đặt chữ trắng. Chỉ có tác dụng với phụ đề hộp cố định (có KF thì bỏ qua).
 """
 from __future__ import annotations
 
@@ -34,6 +36,8 @@ _TIME_RE = re.compile(
 _ARROW_RE = re.compile(r"-+>")
 _WIDTH_RE = re.compile(r"^\s*Độ\s*rộng\s*[:：]", re.IGNORECASE)
 _POS_RE = re.compile(r"^\s*Vị\s*trí\s*[:：]", re.IGNORECASE)
+_POLY_RE = re.compile(r"^\s*Đa\s*giác\s*[:：]", re.IGNORECASE)
+_POLY_PAIR_RE = re.compile(rf"(-?\d+(?:\.\d+)?)\s*[,;]\s*(-?\d+(?:\.\d+)?)")
 _KF_RE = re.compile(r"^\s*KF\s*(\d+(?:[.,]\d+)?)\s*s?\s*[:：]?\s*(.*)$", re.IGNORECASE)
 _PAREN_RE = re.compile(r"\([^)]*\)|（[^）]*）")
 _PAIR_RE = re.compile(rf"^\s*({_NUM})\s*(?:px)?\s*[-–—~]\s*({_NUM})\s*(?:px)?\s*$", re.IGNORECASE)
@@ -80,6 +84,19 @@ def _parse_four(value: str) -> tuple[float, float, float, float] | None:
         return None
     a, b, c, d = (_to_float(t) for t in tokens)
     return a, b, c, d
+
+
+def _parse_polygon(value: str) -> tuple[tuple[float, float], ...] | None:
+    """Đọc 'x0,y0 x1,y1 x2,y2 x3,y3' (bỏ chú thích trong ngoặc và 'px'). None nếu không đúng 4 góc."""
+    cleaned = re.sub(r"px", "", _PAREN_RE.sub("", value), flags=re.IGNORECASE)
+    pairs = _POLY_PAIR_RE.findall(cleaned)
+    if len(pairs) != 4:
+        return None
+    return tuple((float(a), float(b)) for a, b in pairs)
+
+
+def _polygon_area(pts: tuple[tuple[float, float], ...]) -> float:
+    return abs(sum(x0 * y1 - x1 * y0 for (x0, y0), (x1, y1) in zip(pts, pts[1:] + pts[:1]))) / 2
 
 
 def _ordered_box(x1: float, x2: float, y1: float, y2: float) -> tuple[Box, bool]:
@@ -189,13 +206,14 @@ def _parse_block(
     norm = {i: _norm(lines[i]) for i in body}
     width_idx = next((i for i in body if _WIDTH_RE.match(norm[i])), None)
     pos_idx = next((i for i in body if _POS_RE.match(norm[i])), None)
+    poly_idx = next((i for i in body if _POLY_RE.match(norm[i])), None)
     kf_idxs = [i for i in body if _KF_RE.match(norm[i])]
 
     # Điểm neo của nội dung: dòng "Độ rộng:"; nếu thiếu thì dòng Vị trí/KF đầu tiên.
     if width_idx is not None:
         content_end = width_idx
     else:
-        fallbacks = [i for i in ([pos_idx] if pos_idx is not None else []) + kf_idxs]
+        fallbacks = [i for i in ([pos_idx] if pos_idx is not None else []) + ([poly_idx] if poly_idx is not None else []) + kf_idxs]
         content_end = min(fallbacks) if fallbacks else region_end
     content_lines = [lines[i] for i in range(time_idx + 1, content_end)]
     while content_lines and not content_lines[0].strip():
@@ -211,7 +229,7 @@ def _parse_block(
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
-        if i == width_idx or i == pos_idx:
+        if i == width_idx or i == pos_idx or i == poly_idx:
             continue
         km = _KF_RE.match(line)
         if km:
@@ -230,6 +248,8 @@ def _parse_block(
         warnings.append(ParseWarning(i + 1, f"Phụ đề {index}: dòng không nhận dạng được, bỏ qua."))
 
     if keyframes:
+        if poly_idx is not None:
+            warnings.append(ParseWarning(poly_idx + 1, f"Phụ đề {index}: có KF nên bỏ qua dòng Đa giác."))
         kfs = [keyframes[t] for t in sorted(keyframes)]
         return Subtitle(index, start, end, text, None, kfs)
 
@@ -249,7 +269,16 @@ def _parse_block(
     box, swapped = _ordered_box(xs[0], xs[1], ys[0], ys[1])
     if swapped:
         warnings.append(ParseWarning(width_idx + 1, f"Phụ đề {index}: mép bị ngược, đã đổi chỗ."))
-    return Subtitle(index, start, end, text, box, [])
+    polygon = None
+    if poly_idx is not None:
+        raw_poly = norm[poly_idx].split(":", 1)[1] if ":" in norm[poly_idx] else norm[poly_idx].split("：", 1)[1]
+        polygon = _parse_polygon(raw_poly)
+        if polygon is None:
+            warnings.append(ParseWarning(poly_idx + 1, f"Phụ đề {index}: dòng Đa giác cần đúng 4 góc dạng x,y; bỏ qua dòng này."))
+        elif _polygon_area(polygon) < 1.0:
+            warnings.append(ParseWarning(poly_idx + 1, f"Phụ đề {index}: đa giác không có diện tích; bỏ qua dòng này."))
+            polygon = None
+    return Subtitle(index, start, end, text, box, [], polygon=polygon)
 
 
 # ---------------------------------------------------------------- Ghi file
@@ -295,6 +324,8 @@ def write_srtpx(doc: SrtpxDocument) -> str:
         b = sub.first_box
         out.append(f"Độ rộng: {_fmt_num(b.x1)}px - {_fmt_num(b.x2)}px")
         out.append(f"Vị trí: {_fmt_num(b.y1)}px - {_fmt_num(b.y2)}px")
+        if sub.polygon is not None:
+            out.append("Đa giác: " + " ".join(f"{_fmt_num(x)},{_fmt_num(y)}" for x, y in sub.polygon))
         for kf in sub.keyframes:
             kb = kf.box
             out.append(

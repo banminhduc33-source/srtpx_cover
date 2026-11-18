@@ -52,6 +52,9 @@ class Subtitle:
     # Cỡ chữ TỐI ĐA (đơn vị toạ độ #res); chữ vẫn co vừa hộp nếu hộp nhỏ hơn. None = chỉ co vừa hộp như thường lệ. Chỉ do bước "phụ đề chính"
     # (core/maincap.py) đặt khi xuất; không ghi vào file .srtpx.
     font_px: float | None = None
+    # Đa giác 4 góc ((x, y) theo toạ độ #res) của hộp che khi chữ gốc NGHIÊNG. Chỉ dùng với hộp cố định (không keyframe):
+    # hộp đen vẽ theo đa giác này; `box` vẫn là hộp thẳng dùng đặt chữ trắng (và là hộp dự phòng cho bộ đọc cũ).
+    polygon: tuple[tuple[float, float], ...] | None = None
 
     def validate(self) -> None:
         """Ném ValueError nếu vi phạm bất biến ở trên."""
@@ -59,6 +62,11 @@ class Subtitle:
             raise ValueError("Phụ đề có keyframe thì không được có hộp cố định.")
         if not self.keyframes and self.box is None:
             raise ValueError("Phụ đề phải có hộp cố định hoặc ít nhất một keyframe.")
+        if self.polygon is not None:
+            if self.keyframes:
+                raise ValueError("Phụ đề có keyframe thì không được có đa giác.")
+            if len(self.polygon) != 4:
+                raise ValueError("Đa giác phải có đúng 4 góc.")
         times = [k.time for k in self.keyframes]
         if times != sorted(times) or len(set(times)) != len(times):
             raise ValueError("Keyframe phải sắp theo thời gian và không trùng giờ.")

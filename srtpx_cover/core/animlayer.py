@@ -33,6 +33,9 @@ class AnimLayer:
     ch: int
     # hàm theo khung k -> (x1, x2, y1, y2, cỡ chữ) đều là số thực theo điểm ảnh video
     geometry: Callable[[int], tuple[float, float, float, float, float]] = field(repr=False, default=None)  # type: ignore[assignment]
+    # Đa giác che (4 góc, điểm ảnh video thực, số thực) cho chữ nghiêng: có thì hộp đen vẽ theo đa giác thay cho hình chữ nhật
+    # của geometry (geometry vẫn quyết định chỗ đặt chữ). Không có chữ thì `lines` rỗng và không cần font.
+    polygon: tuple[tuple[float, float], ...] | None = None
 
     @property
     def pattern(self) -> str:
@@ -44,6 +47,8 @@ class AnimLayer:
         Vẽ một lần rồi co giãn bằng resample có toạ độ số thực, nên độ rộng chữ đổi liên tục theo hộp: font
         hinting/làm tròn độ rộng từng glyph ở mỗi cỡ chữ khác nhau (nguyên nhân chữ rung ngang) không còn xảy ra.
         """
+        if not any(self.lines):
+            return [(None, 0.0, 0.0)] * len(self.lines)
         font = ImageFont.truetype(self.font_path, big_size, index=self.face_index,
                                   layout_engine=ImageFont.Layout.BASIC)
         out = []
@@ -76,11 +81,16 @@ class AnimLayer:
                 continue
             # hộp: vẽ ở SS lần rồi thu nhỏ -> mép hộp có độ phủ phân số, di chuyển liên tục
             boxbig = Image.new("RGBA", (self.cw * SS, self.ch * SS), (0, 0, 0, 0))
-            ImageDraw.Draw(boxbig).rectangle(
-                [round((x1 - self.ox) * SS), round((y1 - self.oy) * SS),
-                 round((x2 - self.ox) * SS) - 1, round((y2 - self.oy) * SS) - 1],
-                fill=(0, 0, 0, 255),
-            )
+            if self.polygon is not None:
+                ImageDraw.Draw(boxbig).polygon(
+                    [((px - self.ox) * SS, (py - self.oy) * SS) for px, py in self.polygon], fill=(0, 0, 0, 255),
+                )
+            else:
+                ImageDraw.Draw(boxbig).rectangle(
+                    [round((x1 - self.ox) * SS), round((y1 - self.oy) * SS),
+                     round((x2 - self.ox) * SS) - 1, round((y2 - self.oy) * SS) - 1],
+                    fill=(0, 0, 0, 255),
+                )
             layer = boxbig.resize((self.cw, self.ch), Image.Resampling.BOX)
             # chữ: mỗi dòng co về cỡ `size` quanh tâm dòng (số thực), đặt vào lưới điểm ảnh nguyên bằng resize(box=...)
             amask = Image.new("L", (self.cw, self.ch), 0)

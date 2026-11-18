@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from .fonts import FontData, FontChoice, FontError, FontSpec, describe_font_warnings
-from .geometry import PixelBox, compute_scale, is_visible, pixel_box, smallest_pixel_size, video_box
+from .geometry import PixelBox, compute_scale, is_visible, pixel_box, smallest_pixel_size, video_box, video_polygon
 from .layout import LINE_HEIGHT_FACTOR, TextPlan, plan_text
 from .model import SrtpxDocument
 
@@ -28,6 +28,18 @@ class PreviewItem:
     cx: float                   # tâm hộp (chưa làm tròn) ở thời điểm này, dùng căn giữa chữ
     cy: float
     fits: bool
+    polygon: tuple[tuple[float, float], ...] | None = None   # đa giác che (chữ gốc nghiêng), điểm ảnh video thực; None = dùng `box`
+
+    def contains(self, x: float, y: float) -> bool:
+        """Điểm (toạ độ video) có nằm trong vùng che không (đa giác nếu có, không thì hộp)."""
+        if self.polygon is None:
+            return self.box.x1 <= x < self.box.x2 and self.box.y1 <= y < self.box.y2
+        inside = False
+        pts = self.polygon
+        for (x0, y0), (x1, y1) in zip(pts, pts[1:] + pts[:1]):
+            if (y0 > y) != (y1 > y) and x < (x1 - x0) * (y - y0) / (y1 - y0) + x0:
+                inside = not inside
+        return inside or (self.box.x1 <= x < self.box.x2 and self.box.y1 <= y < self.box.y2)
 
     def line_center_y(self, j: int) -> float:
         """Toạ độ y tâm dòng thứ j (khớp công thức drawtext: lệch (j-(n-1)/2) * line_height)."""
@@ -98,6 +110,7 @@ class PreviewModel:
             if not is_visible(sub, t):
                 continue
             box = pixel_box(sub, t, self.scale, self.margin, self.video_size)
+            poly = video_polygon(sub, self.scale, self.margin, self.video_size)
             if box.w <= 0 or box.h <= 0:
                 continue  # bị kẹp hết ra ngoài khung hình (giống bộ xuất)
             vb = video_box(sub, t, self.scale, self.margin, self.video_size)
@@ -113,5 +126,6 @@ class PreviewModel:
             out.append(PreviewItem(
                 row, sub.index, box, lines, size, lh, font,
                 (vb.x1 + vb.x2) / 2, (vb.y1 + vb.y2) / 2, fits,
+                tuple(poly) if poly is not None else None,
             ))
         return out

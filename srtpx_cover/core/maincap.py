@@ -218,7 +218,9 @@ def apply_main_captions(
     if not subs:
         return doc, MainCaptionInfo(False, "không có phụ đề")
     fw, fh = _frame_size(doc)
-    group = find_main_group(subs, fw * options.tol_x_ratio, fh * options.tol_y_ratio)
+    # Phụ đề chữ nghiêng (có đa giác) giữ nguyên như phụ đề phụ: chuẩn hóa hộp ngang/dọc sẽ làm đa giác mất khớp với chữ gốc.
+    flat = [j for j, s in enumerate(subs) if s.polygon is None]
+    group = [flat[j] for j in find_main_group([subs[j] for j in flat], fw * options.tol_x_ratio, fh * options.tol_y_ratio)]
     if len(group) < options.min_group:
         return doc, MainCaptionInfo(False, f"nhóm cùng vị trí đông nhất chỉ có {len(group)} dòng", n_total=total)
 

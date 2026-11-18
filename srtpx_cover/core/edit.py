@@ -17,7 +17,7 @@ _SECONDS_RE = re.compile(r"^\d+(?:\.\d+)?$")
 
 def clone_subtitle(sub: Subtitle) -> Subtitle:
     """Bản sao độc lập (Box/Keyframe bất biến nên chỉ cần sao danh sách keyframe)."""
-    return Subtitle(sub.index, sub.start, sub.end, sub.text, sub.box, list(sub.keyframes))
+    return Subtitle(sub.index, sub.start, sub.end, sub.text, sub.box, list(sub.keyframes), polygon=sub.polygon)
 
 
 def clone_subtitles(subs: Sequence[Subtitle]) -> list[Subtitle]:
@@ -94,12 +94,21 @@ def find_keyframe(sub: Subtitle, t: float, eps: float = KF_EPS) -> int | None:
     return None
 
 
+def map_polygon(polygon: Sequence[tuple[float, float]], old: Box, new: Box) -> tuple[tuple[float, float], ...]:
+    """Đa giác sau khi hộp đi kèm đổi từ `old` sang `new`: mỗi toạ độ được dời/co giãn theo đúng phép biến đổi hộp."""
+    sx = new.width / old.width if old.width > 1e-9 else 1.0
+    sy = new.height / old.height if old.height > 1e-9 else 1.0
+    return tuple((round(new.x1 + (x - old.x1) * sx, 3), round(new.y1 + (y - old.y1) * sy, 3)) for x, y in polygon)
+
+
 def set_box_at(sub: Subtitle, t: float, box: Box) -> None:
     """Đặt hộp tại giờ t (dùng khi kéo hộp trên preview).
 
     Chưa có keyframe: sửa hộp cố định. Đã có keyframe: sửa keyframe tại t, nếu chưa có thì tạo mới.
     """
     if not sub.keyframes:
+        if sub.polygon is not None and sub.box is not None:
+            sub.polygon = map_polygon(sub.polygon, sub.box, box)   # đa giác đi theo hộp (dời / co giãn)
         sub.box = box
         return
     i = find_keyframe(sub, t)
@@ -114,6 +123,7 @@ def add_keyframe(sub: Subtitle, t: float, box: Box) -> int:
     """Thêm keyframe tại t với hộp `box` (phụ đề hộp cố định sẽ chuyển sang dạng keyframe). Trả về chỉ số."""
     if not sub.keyframes:
         sub.box = None
+        sub.polygon = None          # keyframe và đa giác không đi cùng nhau
         sub.keyframes = [Keyframe(t, box)]
         return 0
     set_box_at(sub, t, box)
@@ -157,5 +167,6 @@ def copy_keyframes(src: Subtitle, dst: Subtitle) -> bool:
             continue
         out.append(Keyframe(t, k.box))
     dst.box = None
+    dst.polygon = None
     dst.keyframes = out
     return True

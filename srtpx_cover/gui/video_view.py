@@ -6,11 +6,12 @@ core/preview.py đặt thẳng vào scene, và view tự scale khi cửa sổ co
 from __future__ import annotations
 
 from PySide6.QtCore import QPointF, QRectF, QSizeF, Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QFont, QFontDatabase, QPainter, QPen
+from PySide6.QtGui import QBrush, QColor, QFont, QFontDatabase, QPainter, QPen, QPolygonF
 from PySide6.QtMultimediaWidgets import QGraphicsVideoItem
 from PySide6.QtWidgets import (
     QFrame,
     QGraphicsItem,
+    QGraphicsPolygonItem,
     QGraphicsRectItem,
     QGraphicsScene,
     QGraphicsSimpleTextItem,
@@ -136,14 +137,20 @@ class VideoView(QGraphicsView):
         self._overlay_key = key
         for n, it in enumerate(items):
             z = _Z_BASE + 2 * n  # phụ đề sau vẽ đè phụ đề trước, giống thứ tự filter khi xuất
-            box = QGraphicsRectItem(QRectF(it.box.x1, it.box.y1, it.box.w, it.box.h))
+            if it.polygon is not None:   # chữ gốc nghiêng: hộp đen theo đa giác 4 góc
+                box = QGraphicsPolygonItem(QPolygonF([QPointF(x, y) for x, y in it.polygon]))
+            else:
+                box = QGraphicsRectItem(QRectF(it.box.x1, it.box.y1, it.box.w, it.box.h))
             box.setBrush(QBrush(Qt.GlobalColor.black))   # đục 100%
             box.setPen(QPen(Qt.PenStyle.NoPen))
             box.setZValue(z)
             self._add(box)
             self._add_text(it, z + 1)
             if it.row == selected_row:
-                outline = QGraphicsRectItem(QRectF(it.box.x1, it.box.y1, it.box.w, it.box.h))
+                if it.polygon is not None:
+                    outline = QGraphicsPolygonItem(QPolygonF([QPointF(x, y) for x, y in it.polygon]))
+                else:
+                    outline = QGraphicsRectItem(QRectF(it.box.x1, it.box.y1, it.box.w, it.box.h))
                 pen = QPen(SELECT_COLOR)
                 pen.setWidth(2)
                 pen.setCosmetic(True)  # dày 2px màn hình bất kể mức zoom
@@ -187,8 +194,7 @@ class VideoView(QGraphicsView):
         for name, (x, y) in self._handle_points(it).items():
             if abs(p.x() - x) <= tol and abs(p.y() - y) <= tol:
                 return name
-        b = it.box
-        return "move" if b.x1 <= p.x() < b.x2 and b.y1 <= p.y() < b.y2 else None
+        return "move" if it.contains(p.x(), p.y()) else None
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
         if event.button() == Qt.MouseButton.LeftButton:
@@ -200,8 +206,7 @@ class VideoView(QGraphicsView):
                 event.accept()
                 return
             for it in reversed(self._items):  # hộp vẽ sau nằm trên
-                b = it.box
-                if b.x1 <= p.x() < b.x2 and b.y1 <= p.y() < b.y2:
+                if it.contains(p.x(), p.y()):
                     self.row_clicked.emit(it.row)
                     event.accept()
                     return

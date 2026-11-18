@@ -26,7 +26,9 @@ from .geometry import (
     compute_scale,
     frame_time,
     pixel_box,
+    polygon_bounds,
     video_box,
+    video_polygon,
     visible_frame_range,
 )
 from .animlayer import AnimLayer, canvas_for
@@ -141,6 +143,24 @@ def build_filter_script(
         parts.clear()
         cur = label
 
+    def emit_layer(lay: AnimLayer, k0: int, k1: int, ox: int, oy: int) -> None:
+        """Thêm chuỗi PNG của `lay` làm đầu vào ffmpeg tiếp theo và overlay nó lên video trong [k0, k1]."""
+        nonlocal cur, n_label
+        out.layers.append(lay)
+        flush_chain()
+        label_in, nxt = f"[{len(out.layers)}:v]", f"v{n_label}"
+        n_label += 1
+        lab = f"an{n_label}"
+        segments.append(
+            # settb ép time base = 1 khung để cộng k0 (số nguyên khung) vào PTS là chính xác tuyệt đối.
+            f"{label_in}settb={den}/{num},setpts=PTS+{k0},format=rgba[{lab}]"
+        )
+        segments.append(
+            f"[{cur}][{lab}]overlay=x={ox}:y={oy}:eof_action=pass:format=auto:"
+            + _enable((k0 - 0.5) * den / num, (k1 + 0.5) * den / num) + f"[{nxt}]"
+        )
+        cur = nxt
+
     for sub in doc.subtitles:
         rng = visible_frame_range(sub, num, den)
         if rng is None:
@@ -150,6 +170,30 @@ def build_filter_script(
 
         has_text = options.draw_text and bool(sub.text.strip())
         boxes_vary = len({(kf.box.x1, kf.box.x2, kf.box.y1, kf.box.y2) for kf in sub.keyframes}) > 1
+
+        # --- phụ đề CÓ ĐA GIÁC (chữ gốc nghiêng): hộp đen vẽ theo đa giác, chữ trắng đặt theo hộp thẳng `box` (animlayer.py)
+        if sub.polygon is not None and not sub.keyframes:
+            poly = video_polygon(sub, scale, options.margin, video.size)
+            vb = video_box(sub, sub.start, scale, options.margin, video.size)
+            if has_text:
+                choice, plan = plan_text(sub, chain, scale.sy)
+                choices[sub.index] = choice
+                if not plan.fits_at(vb.x2 - vb.x1, vb.y2 - vb.y1):
+                    overflow.append(sub.index)
+                size = plan.size_for(vb.x2 - vb.x1, vb.y2 - vb.y1)
+                lines, font_path, face = plan.lines, str(choice.font.spec.path), choice.font.spec.face_index
+            else:
+                size, lines, font_path, face = 1.0, (), "", 0
+            px1, px2, py1, py2 = polygon_bounds(poly)
+            ox, oy, cw, ch = canvas_for([(min(px1, vb.x1), max(px2, vb.x2), min(py1, vb.y1), max(py2, vb.y2))])
+            lay = AnimLayer(
+                directory=workdir / f"anim{sub.index:04d}", font_path=font_path, face_index=face,
+                lines=lines, k0=k0, k1=k1, ox=ox, oy=oy, cw=cw, ch=ch,
+                geometry=lambda k, vb=vb, size=size: (vb.x1, vb.x2, vb.y1, vb.y2, size),
+                polygon=tuple(poly),
+            )
+            emit_layer(lay, k0, k1, ox, oy)
+            continue
 
         # --- phụ đề CÓ keyframe và có chữ: hộp + chữ vẽ chung từng khung ở toạ độ số thực (xem animlayer.py)
         if has_text and boxes_vary:
@@ -171,20 +215,7 @@ def build_filter_script(
                 font_path=str(choice.font.spec.path), face_index=choice.font.spec.face_index,
                 lines=plan.lines, k0=k0, k1=k1, ox=ox, oy=oy, cw=cw, ch=ch, geometry=geom,
             )
-            out.layers.append(lay)
-            flush_chain()
-            label_in, nxt = f"[{len(out.layers)}:v]", f"v{n_label}"
-            n_label += 1
-            lab = f"an{n_label}"
-            segments.append(
-                # settb ép time base = 1 khung để cộng k0 (số nguyên khung) vào PTS là chính xác tuyệt đối.
-                f"{label_in}settb={den}/{num},setpts=PTS+{k0},format=rgba[{lab}]"
-            )
-            segments.append(
-                f"[{cur}][{lab}]overlay=x={ox}:y={oy}:eof_action=pass:format=auto:"
-                + _enable((k0 - 0.5) * den / num, (k1 + 0.5) * den / num) + f"[{nxt}]"
-            )
-            cur = nxt
+            emit_layer(lay, k0, k1, ox, oy)
             continue
 
         # --- hộp: các đoạn hằng

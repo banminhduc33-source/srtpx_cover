@@ -70,6 +70,19 @@ Xuất xong, app dựng tiếp video dọc **1080x1920** từ video vừa xuất
 - **Logo GenshinViet.net** (`assets/logo_genshinviet.png`) nằm **dưới video đúng 20px**, căn giữa. Video quá cao không còn chỗ thì bỏ logo.
 - Âm thanh giữ nguyên. Thông số (độ mờ, độ sáng, khoảng cách, cỡ logo...) ở `VerticalOptions` trong `core/vertical.py`.
 
+## Chữ nghiêng: dòng `Đa giác`
+Chữ gốc nghiêng thì hộp chữ nhật phình to và che lấn cảnh. Mỗi phụ đề (hộp cố định, không keyframe) có thể thêm một dòng sau `Vị trí`:
+```
+Độ rộng: 100px - 305px
+Vị trí: 100px - 160px
+Đa giác: 100,140 300,100 305,120 105,160
+```
+- 4 góc thật của dòng chữ, dạng `x,y` cách nhau khoảng trắng, theo toạ độ `#res`, dấu thập phân là `.`.
+- **Hộp đen vẽ theo đa giác** (nới 1px như hộp thường, mép khử răng cưa), còn `Độ rộng`/`Vị trí` vẫn là hộp thẳng để **đặt chữ trắng** (và là hộp dự phòng cho bản cũ không hiểu dòng này).
+- Preview vẽ và chọn theo đa giác; kéo/đổi cỡ hộp thì đa giác dời/co giãn theo. Dùng keyframe cho phụ đề thì đa giác bị bỏ (file có cả KF và `Đa giác` thì bỏ qua dòng `Đa giác` kèm cảnh báo).
+- Phụ đề có đa giác **không** vào nhóm "phụ đề chính" (không chuẩn hóa hộp), giữ nguyên như phụ đề phụ.
+- Dòng sai (không đủ 4 góc, diện tích 0) bị bỏ kèm cảnh báo, phụ đề vẫn dùng hộp thẳng.
+
 ## Chữ dính vào hộp
 Chữ luôn co giãn và dời theo hộp đen: hộp phóng to/thu nhỏ/di chuyển theo keyframe thì chữ to/nhỏ/dời theo, mượt (cỡ chữ và vị trí là số thực, không nhảy từng px). Cỡ chữ = min(cao hộp / 1,2 x số dòng, rộng hộp / độ rộng dòng dài nhất).
 

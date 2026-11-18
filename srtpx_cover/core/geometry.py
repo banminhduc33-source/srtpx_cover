@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from typing import Sequence
 
 from .model import Box, Subtitle
 
@@ -174,6 +175,57 @@ def pixel_box(
         math.ceil(b.x2 - _EPS),
         math.ceil(b.y2 - _EPS),
     )
+
+
+# ---------------------------------------------------------------- Đa giác (chữ nghiêng)
+
+def expand_polygon(pts: Sequence[tuple[float, float]], d: float) -> list[tuple[float, float]]:
+    """Nới đa giác lồi ra ngoài đều d điểm ảnh (mỗi cạnh dời ra d, góc nối bằng giao điểm hai cạnh). d <= 0: giữ nguyên."""
+    pts = [(float(x), float(y)) for x, y in pts]
+    if d <= 0 or len(pts) < 3:
+        return pts
+    area2 = sum(x0 * y1 - x1 * y0 for (x0, y0), (x1, y1) in zip(pts, pts[1:] + pts[:1]))
+    if abs(area2) < 1e-9:
+        return pts
+    sign = 1.0 if area2 > 0 else -1.0          # chiều quay; pháp tuyến ngoài = (dy, -dx) khi area2 > 0 (trục y hướng xuống)
+    n = len(pts)
+
+    def normal(a: tuple[float, float], b: tuple[float, float]) -> tuple[float, float]:
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        length = math.hypot(dx, dy) or 1.0
+        return sign * dy / length, -sign * dx / length
+
+    out: list[tuple[float, float]] = []
+    for i in range(n):
+        n1 = normal(pts[i - 1], pts[i])
+        n2 = normal(pts[i], pts[(i + 1) % n])
+        k = 1.0 + n1[0] * n2[0] + n1[1] * n2[1]
+        if k < 1e-3:                           # hai cạnh gần như quay đầu: dời theo một pháp tuyến cho khỏi vọt xa
+            out.append((pts[i][0] + d * n2[0], pts[i][1] + d * n2[1]))
+        else:
+            out.append((pts[i][0] + d * (n1[0] + n2[0]) / k, pts[i][1] + d * (n1[1] + n2[1]) / k))
+    return out
+
+
+def video_polygon(
+    sub: Subtitle,
+    scale: Scale,
+    margin: float,
+    video_size: tuple[int, int] | None = None,
+) -> list[tuple[float, float]] | None:
+    """Đa giác che (số thực, điểm ảnh video thực): scale từ #res rồi nới ra `margin`. None nếu phụ đề không có đa giác.
+
+    Không kẹp vào khung hình: phần ngoài khung bị cắt tự nhiên khi vẽ lên video."""
+    if sub.polygon is None:
+        return None
+    margin = min(max(margin, 0.0), MAX_MARGIN_PX)
+    return expand_polygon([(x * scale.sx, y * scale.sy) for x, y in sub.polygon], margin)
+
+
+def polygon_bounds(pts: Sequence[tuple[float, float]]) -> tuple[float, float, float, float]:
+    """(x1, x2, y1, y2) hộp bao thẳng của đa giác."""
+    xs, ys = [p[0] for p in pts], [p[1] for p in pts]
+    return min(xs), max(xs), min(ys), max(ys)
 
 
 # ---------------------------------------------------------------- Khung hình (mốc 2)
