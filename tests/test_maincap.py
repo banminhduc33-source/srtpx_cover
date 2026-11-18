@@ -197,13 +197,14 @@ def test_box_is_never_grown_or_split_by_chunks():
 
 # ------------------------------------------------------------------ vẽ ra
 
-def test_fixed_size_overrides_fit_and_scales_with_video_height():
+def test_font_px_is_a_cap_that_scales_with_video_and_still_shrinks_to_small_box():
     sub = Subtitle(1, 0, 1, "abc", box=Box(0, 400, 0, 100), font_px=18.0)
     _, plan = plan_text(sub, CHAIN, 2.0)
-    assert plan.size_for(400, 100) == 36.0 == plan.size_for(10, 10)        # không co theo hộp
+    assert plan.size_for(400, 100) == 36.0                                  # hộp rộng: đúng cỡ tối đa, nhân theo độ phân giải
+    assert plan.size_for(10, 10) < 36.0                                     # hộp nhỏ: chữ co theo hộp, không tràn
     _, plain = plan_text(Subtitle(1, 0, 1, "abc", box=Box(0, 400, 0, 100)), CHAIN, 2.0)
     assert plain.size_for(400, 100) != 36.0
-    assert plan.fits_at(400, 100) and not plan.fits_at(10, 10)
+    assert plan.fits_at(400, 100) and not plan.fits_at(1, 1)
 
 
 def test_filter_script_draws_main_captions_at_exactly_20px_with_each_subtitles_own_black_box():
