@@ -4,7 +4,7 @@ Phim thường có MỘT chỗ đặt phụ đề (cùng vị trí, chỉ lệch
 
 1. Gom các phụ đề theo vị trí (tâm hộp, dung sai theo tỷ lệ khung hình) rồi chọn nhóm ĐÔNG NHẤT làm **phụ đề chính**
    (hòa thì nhóm tổng thời lượng dài hơn, rồi nhóm nằm thấp hơn). Phần còn lại là **phụ đề phụ**, giữ nguyên.
-2. Hộp đen của mỗi phụ đề chính: chiều NGANG (x1, x2) lấy đúng của chính nó trong file .srtpx (chữ gốc tiếng Trung),
+2. Hộp đen của mỗi phụ đề chính: chiều NGANG (x1, x2) lấy của chính nó trong file .srtpx (chữ gốc tiếng Trung) rồi nhân 1,025 quanh tâm,
    chiều DỌC (y1, y2) lấy trung bình của cả nhóm phụ đề chính để mọi câu nằm cùng một hàng, cùng cao. Chữ chia thành
    nhiều cụm nhưng các cụm của một câu dùng chung hộp đó; hộp không bị chia và không bị nới theo chữ.
 3. Chữ vẽ cỡ cố định (mặc định 20px, đơn vị #res), mỗi lần hiện tối đa 5 chữ: câu dài được chia thành nhiều cụm
@@ -29,6 +29,7 @@ from .model import Box, SrtpxDocument, Subtitle
 
 DEFAULT_FONT_PX = 20.0
 DEFAULT_WORDS = 5
+BOX_WIDTH_SCALE = 1.025   # chiều ngang hộp đen nhân thêm, giữ nguyên tâm ngang
 
 # Trọng số nghỉ (tính theo "số âm tiết") TTS thường chèn sau dấu câu.
 PAUSE_WEIGHT = {",": 0.6, ";": 0.8, ":": 0.6, "…": 1.2, ".": 1.2, "?": 1.2, "!": 1.2}
@@ -239,7 +240,8 @@ def apply_main_captions(
 
     def own_box(sub: Subtitle) -> Box:
         r = _rest_box(sub)
-        return Box(r.x1, r.x2, fixed.y1, fixed.y2)
+        cx, half = (r.x1 + r.x2) / 2, (r.x2 - r.x1) * BOX_WIDTH_SCALE / 2
+        return Box(cx - half, cx + half, fixed.y1, fixed.y2)
 
     next_index = max(s.index for s in subs) + 1
     out: list[Subtitle] = []
