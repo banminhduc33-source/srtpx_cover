@@ -7,7 +7,7 @@ Phim thường có MỘT chỗ đặt phụ đề (cùng vị trí, chỉ lệch
 2. Hộp đen của mỗi phụ đề chính: chiều NGANG (x1, x2) lấy của chính nó trong file .srtpx (chữ gốc tiếng Trung) rồi nhân 1,025 quanh tâm,
    chiều DỌC (y1, y2) lấy trung bình của cả nhóm phụ đề chính để mọi câu nằm cùng một hàng, cùng cao. Chữ chia thành
    nhiều cụm nhưng các cụm của một câu dùng chung hộp đó; hộp không bị chia và không bị nới theo chữ.
-3. Chữ vẽ cỡ cố định (mặc định 20px, đơn vị #res), mỗi lần hiện tối đa 5 chữ: câu dài được chia thành nhiều cụm
+3. Chữ vẽ cỡ tối đa (mặc định 20px, đơn vị #res; hộp nhỏ hơn thì chữ co theo hộp), mỗi lần hiện tối đa 5 chữ: câu dài được chia thành nhiều cụm
    nối tiếp nhau trong hộp đó.
 4. Mốc thời gian từng cụm chia theo THỜI LƯỢNG GIỌNG ĐỌC thực tế (`spoken` lấy từ `DubReport.spoken`) chứ không theo
    [start, end] của phụ đề, vì TTS đọc nguyên câu một mạch và có thể bị tua nhanh hoặc mượn khoảng im phía sau. TikTok TTS

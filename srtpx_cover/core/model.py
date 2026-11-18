@@ -49,7 +49,7 @@ class Subtitle:
     text: str
     box: Box | None = None
     keyframes: list[Keyframe] = field(default_factory=list)
-    # Cỡ chữ cố định (đơn vị toạ độ #res). None = co chữ vừa hộp như thường lệ. Chỉ do bước "phụ đề chính"
+    # Cỡ chữ TỐI ĐA (đơn vị toạ độ #res); chữ vẫn co vừa hộp nếu hộp nhỏ hơn. None = chỉ co vừa hộp như thường lệ. Chỉ do bước "phụ đề chính"
     # (core/maincap.py) đặt khi xuất; không ghi vào file .srtpx.
     font_px: float | None = None
 
