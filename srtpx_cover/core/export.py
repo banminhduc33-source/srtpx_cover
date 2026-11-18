@@ -153,7 +153,7 @@ def build_filter_script(
 
         # --- phụ đề CÓ keyframe và có chữ: hộp + chữ vẽ chung từng khung ở toạ độ số thực (xem animlayer.py)
         if has_text and boxes_vary:
-            choice, plan = plan_text(sub, chain)
+            choice, plan = plan_text(sub, chain, scale.sy)
             choices[sub.index] = choice
             for kf in sub.keyframes:
                 vb = video_box(sub, kf.time, scale, options.margin, video.size)
@@ -209,7 +209,7 @@ def build_filter_script(
         # --- chữ cố định (hộp không đổi): drawtext nguyên px là đủ chính xác
         if not has_text:
             continue
-        choice, plan = plan_text(sub, chain)
+        choice, plan = plan_text(sub, chain, scale.sy)
         choices[sub.index] = choice
         vb = video_box(sub, sub.start, scale, options.margin, video.size)
         if not plan.fits_at(vb.x2 - vb.x1, vb.y2 - vb.y1):

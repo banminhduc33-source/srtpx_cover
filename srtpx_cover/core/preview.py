@@ -63,7 +63,7 @@ class PreviewModel:
             if not draw_text or not sub.text.strip():
                 continue
             try:
-                choice, plan = plan_text(sub, chain)
+                choice, plan = plan_text(sub, chain, self.scale.sy)
             except FontError as exc:
                 self.warnings.append(str(exc))
                 continue
@@ -87,7 +87,7 @@ class PreviewModel:
         if not self._chain or not sub.text.strip():
             return
         try:
-            self._plans[row] = plan_text(sub, self._chain)
+            self._plans[row] = plan_text(sub, self._chain, self.scale.sy)
         except FontError:
             pass
 

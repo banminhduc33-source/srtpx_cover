@@ -50,6 +50,7 @@ class DubReport:
     skipped_floating: list[int] = field(default_factory=list)   # chữ bay lơ lửng (không nằm ở phần dưới khung hình)
     skipped_ai: list[int] = field(default_factory=list)         # Gemini cho là không cần lồng (tiếng động, chữ trên màn hình...)
     ai_reasons: dict[int, str] = field(default_factory=dict)    # {chỉ số phụ đề: lý do Gemini bỏ}
+    spoken: dict[int, float] = field(default_factory=dict)      # {chỉ số phụ đề: số giây giọng đọc thực sự chiếm (sau tua nhanh)}
     skipped_other: list[str] = field(default_factory=list)
 
     def summary(self) -> str:
@@ -283,6 +284,7 @@ def build_dub_track(
             report.sped_up += 1
             report.max_factor = max(report.max_factor, sp)
         watermark = place_clip(buf, _as_samples(pcm), int(round(sub.start * RATE)), watermark)
+        report.spoken[sub.index] = len(pcm) / 2 / RATE
         report.placed += 1
         if on_progress:
             on_progress((i + 1) / len(todo))
