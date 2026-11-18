@@ -179,11 +179,14 @@ def test_empty_text_subtitle_in_main_position_is_still_covered_by_fixed_box():
     assert empty.text == "" and empty.box == info.box and (empty.start, empty.end) == (1.0, 2.0)
 
 
-def test_box_stays_the_srtpx_box_and_is_not_grown_or_split_by_chunks():
+def test_box_grows_around_its_center_when_too_small_for_text():
+    # chữ giả rộng 0.6em x 1.04: 20px * 0.6 * 1.04 = 12.5px mỗi ký tự; cụm 5 chữ ~ 25 ký tự => ~280px + đệm; hộp trung bình chỉ 60px
     small = doc_of(*[mk(i, i, i + 1, "abcde fghij klmno pqrst uvwxy", 300, 360, 500, 520) for i in range(1, 4)])
     new, info = apply_main_captions(small, chain=CHAIN)
-    assert info.box == Box(300, 360, 500, 520)            # đúng hộp trong file, không nới theo chữ
-    assert all(s.box == info.box for s in new.subtitles)   # mọi cụm dùng chung một hộp
+    assert info.box.width > 200 and info.box.height >= 20 * 1.2
+    assert (info.box.x1 + info.box.x2) / 2 == pytest.approx(330) and (info.box.y1 + info.box.y2) / 2 == pytest.approx(510)
+    same, info2 = apply_main_captions(small)       # không có font thì không nới
+    assert info2.box.width == pytest.approx(60)
 
 
 # ------------------------------------------------------------------ vẽ ra
