@@ -37,7 +37,7 @@ python -m srtpx_cover.cli video.mp4 phude.srtpx ra.mp4 [--start 5 --end 20] [--c
 ## Lồng tiếng (TikTok TTS)
 Mở file `.srtpx` xong, app tự lọc phụ đề và tạo giọng từng câu (có cache, câu không đổi thì không tạo lại). Khi **Xuất**, giọng được trộn vào video:
 - Giọng đặt đúng mốc **bắt đầu** của phụ đề.
-- Giọng **dài hơn** khoảng [bắt đầu, kết thúc] của phụ đề thì **tua nhanh** cho vừa khít (trần mặc định x3, chỉnh trong Cài đặt); **ngắn hơn** thì giữ nguyên tốc độ, phần còn lại để im.
+- Giọng **dài hơn** khoảng [bắt đầu, kết thúc] của phụ đề thì được **mượn khoảng im lặng phía sau** (đến lúc câu kế tiếp bắt đầu, trừ 0,1 giây); vẫn không đủ thì mới **tua nhanh** cho vừa (trần mặc định x1.4, chỉnh trong Cài đặt); **ngắn hơn** thì giữ nguyên tốc độ, phần còn lại để im.
 - **Chỉ lồng phụ đề nằm ở dưới** (tâm hộp từ 60% chiều cao khung hình trở xuống); chữ bay lơ lửng ở giữa/trên khung hình thì bỏ qua.
 - **Chú thích** (có dấu `*` `#` `※` `★` ... ở đầu/cuối, kể cả trong ngoặc, hoặc cả câu nằm trong một cặp ngoặc bất kỳ như `(cười)`, `[nhạc]`, `【…】`, `《…》`) **không lồng tiếng**.
 - Các block **trùng giờ** nhau chỉ lồng **một** block chính (block bắt đầu sớm nhất), còn lại bỏ qua. Luật này chạy **sau** bước lọc AI (nếu bật), nên nhãn/chữ trên màn hình bị AI loại không còn nuốt mất câu thoại trùng giờ với nó. Tích "Lồng cả chú thích và block trùng giờ" trong Cài đặt để tắt các luật này (kể cả luật chỉ lồng phụ đề ở dưới).
@@ -48,7 +48,7 @@ Thiết lập lọc AI: **Cài đặt > Lồng tiếng**, tích "Lọc bằng AI
 
 Thiết lập: **Cài đặt > Lồng tiếng**, dán `sessionid` (đăng nhập tiktok.com > F12 > Application > Cookies > `sessionid`; coi như mật khẩu, nên dùng tài khoản phụ; app lưu trong cài đặt của máy bạn). Có thể dùng biến môi trường `TIKTOK_SESSIONID` thay cho ô nhập. Menu có thêm **Tạo giọng đọc…** để tạo lại thủ công. Giọng mặc định `BV074_streaming` (tiếng Việt, chưa kiểm chứng); có thể gõ mã giọng khác. Đây là endpoint nội bộ của TikTok, có thể đổi hoặc ngừng bất cứ lúc nào.
 
-Dòng lệnh: `python -m srtpx_cover.cli video.mp4 phude.srtpx ra.mp4 --dub --voice BV074_streaming [--dub-comments] [--orig-volume 0.3] [--max-speed 3]`
+Dòng lệnh: `python -m srtpx_cover.cli video.mp4 phude.srtpx ra.mp4 --dub --voice BV074_streaming [--dub-comments] [--orig-volume 0.3] [--max-speed 1.4]`
 Thêm lọc AI: `... --dub --ai-filter [--gemini-key KEY] [--gemini-model gemini-3.5-flash-lite]` (key mặc định lấy từ `GEMINI_API_KEY`).
 
 ## Khung 9:16 + logo (tự động sau khi xuất)

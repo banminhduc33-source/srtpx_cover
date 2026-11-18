@@ -2,7 +2,8 @@
 
 Quy tắc:
 - Giọng đặt đúng mốc BẮT ĐẦU của phụ đề.
-- Giọng DÀI hơn khoảng [start, end] của phụ đề thì tua nhanh (atempo) cho vừa khít.
+- Giọng DÀI hơn khoảng [start, end] của phụ đề thì trước hết mượn khoảng im lặng phía sau (đến lúc câu kế tiếp bắt đầu),
+  vẫn không đủ thì mới tua nhanh (atempo) cho vừa khít, tối đa max_speed.
 - Giọng NGẮN hơn thì giữ nguyên tốc độ, phần còn lại để im.
 - Phụ đề chú thích ("lơ lửng": có dấu * hoặc cả câu nằm trong ngoặc) mặc định KHÔNG lồng tiếng.
 - Các block trùng giờ nhau thì chỉ MỘT block chính được lồng (block bắt đầu sớm nhất), còn lại bỏ qua.
@@ -26,7 +27,7 @@ from .ffmpeg_tools import FfmpegError, FfmpegCancelled, _creationflags
 from .model import SrtpxDocument, Subtitle
 
 RATE = 24000  # TikTok trả mp3 24 kHz mono
-DEFAULT_MAX_SPEED = 3.0
+DEFAULT_MAX_SPEED = 1.4   # tua quá x1.5 thì giọng TTS tiếng Việt méo, khó nghe
 
 
 @dataclass(frozen=True)
@@ -194,6 +195,17 @@ def speed_for(clip_seconds: float, slot_seconds: float, max_speed: float) -> flo
     return min(clip_seconds / slot_seconds, max(1.0, max_speed))
 
 
+GAP_BEFORE_NEXT = 0.1  # giây: chừa lại trước câu kế tiếp khi giọng mượn khoảng im lặng phía sau
+
+
+def slot_for(sub: Subtitle, next_start: float | None, total_seconds: float) -> float:
+    """Thời lượng giọng được phép chiếm: từ lúc bắt đầu phụ đề đến lúc câu kế tiếp bắt đầu (trừ GAP_BEFORE_NEXT),
+    nhưng không bao giờ ngắn hơn khoảng [start, end] của chính phụ đề."""
+    own = sub.end - sub.start
+    limit = total_seconds if next_start is None else min(next_start, total_seconds)
+    return max(own, limit - sub.start - GAP_BEFORE_NEXT)
+
+
 def decode_pcm(ffmpeg: str, path: Path, speed: float = 1.0) -> bytes:
     """Giải mã mp3 thành PCM s16le mono 24 kHz, có tua nhanh nếu speed > 1."""
     cmd = [ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-i", str(path), "-vn"]
@@ -259,7 +271,8 @@ def build_dub_track(
         if sub.start >= total_seconds:
             report.skipped_other.append(f"Phụ đề {sub.index}: bắt đầu sau khi video kết thúc")
             continue
-        slot = sub.end - sub.start
+        nxt = todo[i + 1].start if i + 1 < len(todo) else None
+        slot = slot_for(sub, nxt, total_seconds)
         pcm = decode_pcm(ffmpeg, clips[sub.index])
         dur = len(pcm) / 2 / RATE
         sp = speed_for(dur, slot, options.max_speed)
