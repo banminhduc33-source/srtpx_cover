@@ -111,17 +111,17 @@ def three_main():
     )
 
 
-def test_main_boxes_are_one_fixed_mean_box_with_fixed_font_and_secondary_untouched():
+def test_each_main_subtitle_keeps_its_own_srtpx_box_with_fixed_font_and_secondary_untouched():
     doc = three_main()
     new, info = apply_main_captions(doc)
     assert info.applied and info.n_main == 3 and info.n_total == 4
     main = [s for s in new.subtitles if s.index not in {1, 2, 3, 4}]
-    assert main and all(s.box == info.box and not s.keyframes and s.font_px == 20.0 for s in main)
-    # hộp = trung bình hộp của cả nhóm chính
-    assert info.box.x1 == pytest.approx((200 + 210 + 190) / 3)
-    assert info.box.x2 == pytest.approx((560 + 540 + 570) / 3)
-    assert info.box.y1 == pytest.approx((500 + 502 + 498) / 3)
-    assert info.box.y2 == pytest.approx((535 + 538 + 533) / 3)
+    assert main and all(not s.keyframes and s.font_px == 20.0 for s in main)
+    own = {1: Box(200, 560, 500, 535), 2: Box(210, 540, 502, 538), 3: Box(190, 570, 498, 533)}
+    for idx, text_part in ((1, "một hai"), (1, "sáu bảy"), (2, "Xin chào"), (3, "Câu cuối nhé")):
+        s = next(x for x in main if x.text.startswith(text_part))
+        assert s.box == own[idx]                            # đúng hộp riêng trong file, không dùng hộp chung
+    assert len({s.box for s in main}) == 3
     fly = [s for s in new.subtitles if s.text == "Chữ bay"]
     assert len(fly) == 1 and fly[0] == doc.subtitles[3] and fly[0].font_px is None
     assert doc.subtitles[0].text.startswith("một hai") and doc.subtitles[0].font_px is None   # tài liệu gốc không đổi
@@ -168,25 +168,21 @@ def test_overlapping_main_blocks_keep_box_but_lose_text():
     new, info = apply_main_captions(doc)
     assert info.n_dropped_overlap == 1
     dropped = [s for s in new.subtitles if s.index == 2][0]
-    assert dropped.text == "" and dropped.box == info.box and dropped.font_px is None
+    assert dropped.text == "" and dropped.box == Box(200, 560, 500, 535) and dropped.font_px is None
     assert [s.text for s in new.subtitles if s.text] == ["câu chính", "câu kế"]
 
 
-def test_empty_text_subtitle_in_main_position_is_still_covered_by_fixed_box():
+def test_empty_text_subtitle_in_main_position_is_still_covered_by_its_own_box():
     doc = doc_of(mk(1, 0.0, 1.0, "a b"), mk(2, 1.0, 2.0, "", 190, 570, 498, 533), mk(3, 2.0, 3.0, "c d"))
     new, info = apply_main_captions(doc)
     empty = [s for s in new.subtitles if s.index == 2][0]
-    assert empty.text == "" and empty.box == info.box and (empty.start, empty.end) == (1.0, 2.0)
+    assert empty.text == "" and empty.box == Box(190, 570, 498, 533) and (empty.start, empty.end) == (1.0, 2.0)
 
 
-def test_box_grows_around_its_center_when_too_small_for_text():
-    # chữ giả rộng 0.6em x 1.04: 20px * 0.6 * 1.04 = 12.5px mỗi ký tự; cụm 5 chữ ~ 25 ký tự => ~280px + đệm; hộp trung bình chỉ 60px
+def test_box_is_never_grown_or_split_by_chunks():
     small = doc_of(*[mk(i, i, i + 1, "abcde fghij klmno pqrst uvwxy", 300, 360, 500, 520) for i in range(1, 4)])
-    new, info = apply_main_captions(small, chain=CHAIN)
-    assert info.box.width > 200 and info.box.height >= 20 * 1.2
-    assert (info.box.x1 + info.box.x2) / 2 == pytest.approx(330) and (info.box.y1 + info.box.y2) / 2 == pytest.approx(510)
-    same, info2 = apply_main_captions(small)       # không có font thì không nới
-    assert info2.box.width == pytest.approx(60)
+    new, _ = apply_main_captions(small, chain=CHAIN)
+    assert all(s.box == Box(300, 360, 500, 520) for s in new.subtitles)   # đúng hộp trong file, không nới theo chữ
 
 
 # ------------------------------------------------------------------ vẽ ra
@@ -200,12 +196,12 @@ def test_fixed_size_overrides_fit_and_scales_with_video_height():
     assert plan.fits_at(400, 100) and not plan.fits_at(10, 10)
 
 
-def test_filter_script_draws_main_captions_at_exactly_20px_in_one_black_box():
+def test_filter_script_draws_main_captions_at_exactly_20px_with_each_subtitles_own_black_box():
     video = VideoInfo(768, 576, 30, 1, 10.0)
     new, info = apply_main_captions(three_main(), chain=CHAIN)
     script = build_filter_script(new, video, CHAIN, ExportOptions(), Path("/tmp/work"))
     sizes = set(re.findall(r"fontsize='([\d.]+)'", script.text))
     assert "20" in sizes
     boxes = set(re.findall(r"drawbox=x=(\d+):y=(\d+):w=(\d+):h=(\d+)", script.text))
-    assert len(boxes) == 2                               # hộp cố định của phụ đề chính + hộp của chữ bay (phụ)
+    assert len(boxes) == 4                               # 3 phụ đề chính, mỗi cái hộp riêng theo file + hộp của chữ bay (phụ)
     assert not script.layers                             # không còn keyframe nên không cần lớp vẽ từng khung
