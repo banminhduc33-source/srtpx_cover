@@ -116,7 +116,7 @@ def test_main_boxes_are_one_fixed_mean_box_with_fixed_font_and_secondary_untouch
     new, info = apply_main_captions(doc)
     assert info.applied and info.n_main == 3 and info.n_total == 4
     main = [s for s in new.subtitles if s.index not in {1, 2, 3, 4}]
-    assert main and all(s.box == info.box and not s.keyframes and s.font_px == 18.0 for s in main)
+    assert main and all(s.box == info.box and not s.keyframes and s.font_px == 20.0 for s in main)
     # hộp = trung bình hộp của cả nhóm chính
     assert info.box.x1 == pytest.approx((200 + 210 + 190) / 3)
     assert info.box.x2 == pytest.approx((560 + 540 + 570) / 3)
@@ -179,14 +179,11 @@ def test_empty_text_subtitle_in_main_position_is_still_covered_by_fixed_box():
     assert empty.text == "" and empty.box == info.box and (empty.start, empty.end) == (1.0, 2.0)
 
 
-def test_box_grows_around_its_center_when_too_small_for_text():
-    # chữ giả rộng 0.6em x 1.04: 18px * 0.6 * 1.04 = 11.2px mỗi ký tự; cụm 5 chữ ~ 25 ký tự => ~280px + đệm; hộp trung bình chỉ 60px
+def test_box_stays_the_srtpx_box_and_is_not_grown_or_split_by_chunks():
     small = doc_of(*[mk(i, i, i + 1, "abcde fghij klmno pqrst uvwxy", 300, 360, 500, 520) for i in range(1, 4)])
     new, info = apply_main_captions(small, chain=CHAIN)
-    assert info.box.width > 200 and info.box.height >= 18 * 1.2
-    assert (info.box.x1 + info.box.x2) / 2 == pytest.approx(330) and (info.box.y1 + info.box.y2) / 2 == pytest.approx(510)
-    same, info2 = apply_main_captions(small)       # không có font thì không nới
-    assert info2.box.width == pytest.approx(60)
+    assert info.box == Box(300, 360, 500, 520)            # đúng hộp trong file, không nới theo chữ
+    assert all(s.box == info.box for s in new.subtitles)   # mọi cụm dùng chung một hộp
 
 
 # ------------------------------------------------------------------ vẽ ra
@@ -200,12 +197,12 @@ def test_fixed_size_overrides_fit_and_scales_with_video_height():
     assert plan.fits_at(400, 100) and not plan.fits_at(10, 10)
 
 
-def test_filter_script_draws_main_captions_at_exactly_18px_in_one_black_box():
+def test_filter_script_draws_main_captions_at_exactly_20px_in_one_black_box():
     video = VideoInfo(768, 576, 30, 1, 10.0)
     new, info = apply_main_captions(three_main(), chain=CHAIN)
     script = build_filter_script(new, video, CHAIN, ExportOptions(), Path("/tmp/work"))
     sizes = set(re.findall(r"fontsize='([\d.]+)'", script.text))
-    assert "18" in sizes
+    assert "20" in sizes
     boxes = set(re.findall(r"drawbox=x=(\d+):y=(\d+):w=(\d+):h=(\d+)", script.text))
     assert len(boxes) == 2                               # hộp cố định của phụ đề chính + hộp của chữ bay (phụ)
     assert not script.layers                             # không còn keyframe nên không cần lớp vẽ từng khung

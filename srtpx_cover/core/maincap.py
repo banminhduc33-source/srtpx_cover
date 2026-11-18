@@ -4,8 +4,9 @@ Phim thường có MỘT chỗ đặt phụ đề (cùng vị trí, chỉ lệch
 
 1. Gom các phụ đề theo vị trí (tâm hộp, dung sai theo tỷ lệ khung hình) rồi chọn nhóm ĐÔNG NHẤT làm **phụ đề chính**
    (hòa thì nhóm tổng thời lượng dài hơn, rồi nhóm nằm thấp hơn). Phần còn lại là **phụ đề phụ**, giữ nguyên.
-2. Mọi phụ đề chính dùng CHUNG một hộp đen cố định = trung bình hộp của cả nhóm (nới ra nếu chưa đủ chứa chữ).
-3. Chữ vẽ cỡ cố định (mặc định 18px, đơn vị #res), mỗi lần hiện tối đa 5 chữ: câu dài được chia thành nhiều cụm
+2. Mọi phụ đề chính dùng CHUNG một hộp đen cố định = trung bình hộp của cả nhóm, lấy đúng từ file .srtpx (KHÔNG nới
+   theo chữ đã chia cụm): chữ được chia nhỏ nhưng hộp đen vẫn là hộp của cả câu gốc, không bị chia.
+3. Chữ vẽ cỡ cố định (mặc định 20px, đơn vị #res), mỗi lần hiện tối đa 5 chữ: câu dài được chia thành nhiều cụm
    nối tiếp nhau trong hộp đó.
 4. Mốc thời gian từng cụm chia theo THỜI LƯỢNG GIỌNG ĐỌC thực tế (`spoken` lấy từ `DubReport.spoken`) chứ không theo
    [start, end] của phụ đề, vì TTS đọc nguyên câu một mạch và có thể bị tua nhanh hoặc mượn khoảng im phía sau. TikTok TTS
@@ -22,11 +23,10 @@ from dataclasses import dataclass, replace
 from typing import Sequence
 
 from .dub import drop_overlaps
-from .fonts import FontData, FontError, choose_font, fold_for_font, text_width
-from .layout import LINE_HEIGHT_FACTOR
+from .fonts import FontData
 from .model import Box, SrtpxDocument, Subtitle
 
-DEFAULT_FONT_PX = 18.0
+DEFAULT_FONT_PX = 20.0
 DEFAULT_WORDS = 5
 
 # Trọng số nghỉ (tính theo "số âm tiết") TTS thường chèn sau dấu câu.
@@ -42,7 +42,6 @@ class MainCaptionOptions:
     tol_x_ratio: float = 0.05             # dung sai tâm theo chiều ngang, tỷ lệ chiều rộng khung hình
     tol_y_ratio: float = 0.025            # dung sai tâm theo chiều dọc, tỷ lệ chiều cao khung hình
     min_group: int = 2                    # nhóm đông nhất ít hơn số này thì coi như không có phụ đề chính
-    pad_px: float = 3.0                   # đệm quanh chữ khi phải nới hộp (đơn vị #res)
 
 
 @dataclass(frozen=True)
@@ -197,20 +196,6 @@ def _span(sub: Subtitle, next_start: float | None, spoken: float | None) -> tupl
 
 # ---------------------------------------------------------------- áp dụng
 
-def _needed_size(texts: Sequence[str], chain: Sequence[FontData] | None, opts: MainCaptionOptions) -> tuple[float, float]:
-    """(rộng, cao) tối thiểu theo toạ độ #res để chứa mọi cụm ở `font_px`; (0, 0) nếu chưa có font để đo."""
-    if not chain or not texts:
-        return 0.0, 0.0
-    w = 0.0
-    try:
-        for t in texts:
-            ft = fold_for_font(t, chain)
-            w = max(w, text_width(choose_font(ft, chain).font, ft, opts.font_px))
-    except FontError:
-        return 0.0, 0.0
-    return w + 2 * opts.pad_px, LINE_HEIGHT_FACTOR * opts.font_px + 2 * opts.pad_px
-
-
 def apply_main_captions(
     doc: SrtpxDocument,
     options: MainCaptionOptions = MainCaptionOptions(),
@@ -220,7 +205,7 @@ def apply_main_captions(
     """Trả về (tài liệu mới, thông tin). Không tìm được nhóm chính thì trả lại chính `doc` và `applied=False`.
 
     `spoken`: {chỉ số phụ đề: số giây giọng đọc} (DubReport.spoken); thiếu thì chia theo [start, end] của phụ đề.
-    `chain`: chuỗi font để đo chữ và nới hộp nếu hộp trung bình chưa đủ chứa cụm dài nhất; không có thì không nới.
+    `chain`: giữ lại cho tương thích, không còn dùng (hộp không nới theo chữ).
     """
     subs = doc.subtitles
     total = len(subs)
@@ -240,7 +225,6 @@ def apply_main_captions(
     kept.sort(key=lambda s: (s.start, s.index))
 
     plan: dict[int, list[tuple[float, float, str]]] = {}   # id(phụ đề) -> [(bắt đầu, kết thúc, chữ)]
-    all_texts: list[str] = []
     for i, s in enumerate(kept):
         nxt = kept[i + 1].start if i + 1 < len(kept) else None
         speech_end, t_end = _span(s, nxt, (spoken or {}).get(s.index))
@@ -248,14 +232,9 @@ def apply_main_captions(
         weights = [sum(ws) for ws in _per_chunk_weights(chunks)]
         times = chunk_times(weights, s.start, speech_end, t_end)
         plan[id(s)] = [(a, b, " ".join(c)) for (a, b), c in zip(times, chunks)]
-        all_texts += [" ".join(c) for c in chunks]
 
-    # Hộp cố định: trung bình hộp cả nhóm (gồm cả nhiễu cùng vị trí), nới quanh tâm nếu chưa đủ chứa chữ.
-    mean = _mean_box([_rest_box(s) for s in members])
-    need_w, need_h = _needed_size(all_texts, chain, options)
-    cx, cy = (mean.x1 + mean.x2) / 2, (mean.y1 + mean.y2) / 2
-    w, h = max(mean.width, need_w), max(mean.height, need_h)
-    fixed = Box(cx - w / 2, cx + w / 2, cy - h / 2, cy + h / 2)
+    # Hộp cố định: trung bình hộp của cả nhóm trong file .srtpx (không nới, không chia theo cụm chữ).
+    fixed = _mean_box([_rest_box(s) for s in members])
 
     next_index = max(s.index for s in subs) + 1
     out: list[Subtitle] = []
