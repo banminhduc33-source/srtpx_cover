@@ -92,7 +92,8 @@ def find_main_group(subs: Sequence[Subtitle], tol_x: float, tol_y: float) -> lis
 
     Mỗi phụ đề lần lượt làm tâm: nhóm = mọi phụ đề có tâm hộp lệch không quá (tol_x, tol_y). Chọn tâm cho nhóm đông nhất
     (hòa: tổng thời lượng dài hơn, rồi nằm thấp hơn trên khung hình), sau đó dời tâm về trung bình của nhóm vài vòng để nhóm
-    không phụ thuộc vào việc phụ đề nào tình cờ được chọn làm tâm đầu tiên.
+    không phụ thuộc vào việc phụ đề nào tình cờ được chọn làm tâm đầu tiên. Cuối cùng, mọi hộp nằm trọn trong vùng bao
+    của nhóm (dù tâm lệch quá dung sai) cũng được kết nạp.
     """
     if not subs:
         return []
@@ -119,7 +120,13 @@ def find_main_group(subs: Sequence[Subtitle], tol_x: float, tol_y: float) -> lis
         if nxt == best or len(nxt) < len(best):
             break
         best = nxt
-    return best
+    # Mở rộng: hộp nằm TRỌN trong vùng bao của nhóm (hộp nhỏ nhất chứa mọi hộp của nhóm) cũng là phụ đề chính,
+    # dù tâm lệch quá dung sai. Vùng bao không đổi khi thêm các hộp nằm trong nó nên chỉ cần xét một lượt.
+    rects = [_rest_box(s) for s in subs]
+    gx1, gx2 = min(rects[j].x1 for j in best), max(rects[j].x2 for j in best)
+    gy1, gy2 = min(rects[j].y1 for j in best), max(rects[j].y2 for j in best)
+    inside = {j for j, r in enumerate(rects) if r.x1 >= gx1 and r.x2 <= gx2 and r.y1 >= gy1 and r.y2 <= gy2}
+    return sorted(set(best) | inside)
 
 
 def _mean_box(boxes: Sequence[Box]) -> Box:

@@ -49,6 +49,24 @@ def test_largest_cluster_wins_even_with_ocr_jitter():
     assert find_main_group(subs, 768 * 0.05, 576 * 0.025) == [0, 1, 2]
 
 
+def test_box_enclosed_by_the_main_group_region_joins_the_group():
+    subs = [
+        mk(1, 0, 1, "a", 200, 560, 500, 535),
+        mk(2, 1, 2, "b", 210, 550, 498, 537),
+        mk(3, 2, 3, "c", 190, 570, 490, 545),      # hộp lớn hơn: định hình vùng bao của nhóm
+        mk(4, 3, 4, "d", 400, 540, 492, 512),      # tâm dọc 502, lệch tâm nhóm ~15px; nằm trọn trong vùng bao
+        mk(5, 4, 5, "e", 100, 300, 100, 130),      # ngoài vùng bao: vẫn là phụ đề phụ
+    ]
+    # dung sai dọc chỉ 2px nên hộp 4 không vào bằng tâm, chỉ vào vì nằm trọn trong vùng bao của nhóm
+    assert find_main_group(subs, 768 * 0.05, 2) == [0, 1, 2, 3]
+
+
+def test_box_poking_out_of_the_group_region_is_not_enclosed():
+    subs = [mk(1, 0, 1, "a", 200, 560, 500, 535), mk(2, 1, 2, "b", 205, 555, 502, 533),
+            mk(3, 2, 3, "c", 300, 600, 500, 535)]      # thò ra ngoài bên phải
+    assert find_main_group(subs, 768 * 0.05, 576 * 0.025) == [0, 1]
+
+
 def test_tie_prefers_longer_total_duration_then_lower_position():
     a = [mk(1, 0, 1, "a", y1=100, y2=130), mk(2, 1, 2, "b", y1=100, y2=130)]
     b = [mk(3, 2, 3, "c", y1=500, y2=535), mk(4, 3, 4, "d", y1=500, y2=535)]
