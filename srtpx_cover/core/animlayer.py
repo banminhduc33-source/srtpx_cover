@@ -41,6 +41,7 @@ class AnimLayer:
     # Đa giác theo từng khung (chữ nghiêng/xoay + chuyển động, đa giác nội suy theo keyframe): ưu tiên hơn `polygon` nếu có.
     polygon_fn: Callable[[int], tuple[tuple[float, float], ...] | None] | None = field(repr=False, default=None)
     color: tuple[int, int, int] = (0, 0, 0)   # màu hộp che (mặc định đen; phụ đề phụ có thể lấy màu nền quanh hộp)
+    text_color: tuple[int, int, int] = (255, 255, 255)   # màu chữ (trắng; chọn đen khi hộp che sáng để chữ không chìm vào hộp)
 
     @property
     def pattern(self) -> str:
@@ -153,7 +154,7 @@ class AnimLayer:
                 amask = self._tilted_mask(masks, pad, big, size, frame)   # hộp nghiêng: chữ xoay theo cùng góc
             else:
                 amask = self._upright_mask(masks, pad, big, x1, x2, y1, y2, size)
-            white = Image.new("RGBA", (self.cw, self.ch), (255, 255, 255, 0))
+            white = Image.new("RGBA", (self.cw, self.ch), (*self.text_color, 0))
             white.putalpha(amask)
             small = Image.alpha_composite(layer, white)
             from io import BytesIO

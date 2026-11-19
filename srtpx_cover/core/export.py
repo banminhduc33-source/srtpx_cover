@@ -34,6 +34,7 @@ from .geometry import (
     visible_frame_range,
 )
 from .animlayer import AnimLayer, canvas_for
+from .bgcolor import contrast_text_color
 from .layout import LINE_HEIGHT_FACTOR, plan_text
 from .model import SrtpxDocument, Subtitle
 
@@ -175,6 +176,8 @@ def build_filter_script(
         has_text = options.draw_text and bool(sub.text.strip())
         box_rgb = (options.box_colors or {}).get(sub.index)
         box_color = ("0x%02x%02x%02x" % box_rgb) if box_rgb else "black"
+        text_rgb = contrast_text_color(box_rgb)         # hộp che sáng (nền trắng) thì chữ đen, không thì chữ trắng
+        text_color = "0x%02x%02x%02x" % text_rgb
         boxes_vary = len({(kf.box.x1, kf.box.x2, kf.box.y1, kf.box.y2) for kf in sub.keyframes}) > 1
 
         # --- phụ đề CÓ ĐA GIÁC (chữ gốc nghiêng): hộp đen vẽ theo đa giác, chữ trắng xoay theo góc đa giác và co vừa đa giác (animlayer.py)
@@ -198,7 +201,7 @@ def build_filter_script(
                 directory=workdir / f"anim{sub.index:04d}", font_path=font_path, face_index=face,
                 lines=lines, k0=k0, k1=k1, ox=ox, oy=oy, cw=cw, ch=ch,
                 geometry=lambda k, vb=vb, size=size: (vb.x1, vb.x2, vb.y1, vb.y2, size),
-                polygon=tuple(poly), color=box_rgb or (0, 0, 0),
+                polygon=tuple(poly), color=box_rgb or (0, 0, 0), text_color=text_rgb,
             )
             emit_layer(lay, k0, k1, ox, oy)
             continue
@@ -236,7 +239,7 @@ def build_filter_script(
             lay = AnimLayer(
                 directory=workdir / f"anim{sub.index:04d}", font_path=font_path, face_index=face,
                 lines=lines, k0=k0, k1=k1, ox=ox, oy=oy, cw=cw, ch=ch, geometry=geom_p, polygon_fn=poly_p,
-                color=box_rgb or (0, 0, 0),
+                color=box_rgb or (0, 0, 0), text_color=text_rgb,
             )
             emit_layer(lay, k0, k1, ox, oy)
             continue
@@ -260,7 +263,7 @@ def build_filter_script(
                 directory=workdir / f"anim{sub.index:04d}",
                 font_path=str(choice.font.spec.path), face_index=choice.font.spec.face_index,
                 lines=plan.lines, k0=k0, k1=k1, ox=ox, oy=oy, cw=cw, ch=ch, geometry=geom,
-                color=box_rgb or (0, 0, 0),
+                color=box_rgb or (0, 0, 0), text_color=text_rgb,
             )
             emit_layer(lay, k0, k1, ox, oy)
             continue
@@ -303,7 +306,7 @@ def build_filter_script(
             dy = _num((j - (plan.n - 1) / 2) * LINE_HEIGHT_FACTOR)
             parts.append(
                 f"drawtext=fontfile={escape_path(choice.font.spec.path)}:textfile={escape_path(tf)}:"
-                f"expansion=none:fontsize='{size}':fontcolor=white:"
+                f"expansion=none:fontsize='{size}':fontcolor={text_color}:"
                 f"x='({cx})-text_w/2':y='({cy})+({dy})*({size})-text_h/2':{window}"
             )
 
