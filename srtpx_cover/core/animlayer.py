@@ -38,6 +38,7 @@ class AnimLayer:
     polygon: tuple[tuple[float, float], ...] | None = None
     # Đa giác theo từng khung (chữ nghiêng/xoay + chuyển động, đa giác nội suy theo keyframe): ưu tiên hơn `polygon` nếu có.
     polygon_fn: Callable[[int], tuple[tuple[float, float], ...] | None] | None = field(repr=False, default=None)
+    color: tuple[int, int, int] = (0, 0, 0)   # màu hộp che (mặc định đen; phụ đề phụ có thể lấy màu nền quanh hộp)
 
     @property
     def pattern(self) -> str:
@@ -87,13 +88,13 @@ class AnimLayer:
             boxbig = Image.new("RGBA", (self.cw * SS, self.ch * SS), (0, 0, 0, 0))
             if poly is not None:
                 ImageDraw.Draw(boxbig).polygon(
-                    [((px - self.ox) * SS, (py - self.oy) * SS) for px, py in poly], fill=(0, 0, 0, 255),
+                    [((px - self.ox) * SS, (py - self.oy) * SS) for px, py in poly], fill=(*self.color, 255),
                 )
             else:
                 ImageDraw.Draw(boxbig).rectangle(
                     [round((x1 - self.ox) * SS), round((y1 - self.oy) * SS),
                      round((x2 - self.ox) * SS) - 1, round((y2 - self.oy) * SS) - 1],
-                    fill=(0, 0, 0, 255),
+                    fill=(*self.color, 255),
                 )
             layer = boxbig.resize((self.cw, self.ch), Image.Resampling.BOX)
             # chữ: mỗi dòng co về cỡ `size` quanh tâm dòng (số thực), đặt vào lưới điểm ảnh nguyên bằng resize(box=...)
