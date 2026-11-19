@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..core.dub import apply_ai_filter, drop_overlaps, prepare_dub_audio, split_dub_subtitles
+from ..core.dub import NO_MAIN_WARNING, drop_overlaps, keep_main_subtitles, prepare_dub_audio, split_dub_subtitles
 from ..core.tts import TtsError, ensure_clips, tiktok_synthesizer
 from ..core.export import ExportOptions, build_command, build_filter_script, write_textfiles
 from ..core.maincap import MainCaptionOptions, apply_main_captions
@@ -58,7 +58,7 @@ from ..core.playback import (
 )
 from ..core.preview import PreviewModel
 from .dialogs import (
-    ExportDialog, SettingsDialog, dub_classifier, dub_enabled, dub_options, dub_sessionid, dub_voice,
+    ExportDialog, SettingsDialog, dub_enabled, dub_options, dub_sessionid, dub_voice,
     run_task_with_progress, run_with_progress, settings_overrides,
 )
 from . import theme
@@ -693,7 +693,7 @@ class MainWindow(QMainWindow):
         return Path(base or tempfile.gettempdir()) / "tts_cache"
 
     def generate_dub(self, auto: bool = False) -> None:
-        """Lọc các phụ đề cần lồng và tạo giọng từng câu (câu đã có trong cache thì bỏ qua)."""
+        """Chọn các phụ đề chính cần lồng và tạo giọng từng câu (câu đã có trong cache thì bỏ qua)."""
         if self.doc is None:
             QMessageBox.information(self, "Lồng tiếng", "Hãy mở file .srtpx trước.")
             return
@@ -703,8 +703,10 @@ class MainWindow(QMainWindow):
                 QMessageBox.information(self, "Lồng tiếng", "Chưa có sessionid TikTok. Vào Cài đặt > Lồng tiếng để nhập.")
             return
         opts = dub_options(self.settings)
-        subs = split_dub_subtitles(self.doc, opts.include_comments, resolve_overlaps=False)[0]   # trùng giờ xử lý sau AI
-        if not subs:
+        subs = split_dub_subtitles(self.doc, opts.include_comments, resolve_overlaps=False)[0]   # trùng giờ xử lý sau
+        subs, _, found_main = keep_main_subtitles(subs, self.doc, opts.include_comments)   # chỉ phụ đề chính
+        final, _ = drop_overlaps(subs, opts.include_comments)
+        if not final:
             return
         voice, cache = dub_voice(self.settings), self._dub_cache_dir()
         try:
@@ -712,30 +714,24 @@ class MainWindow(QMainWindow):
         except TtsError as exc:
             self._error("Lồng tiếng", str(exc))
             return
-        classifier, ai_warning = dub_classifier(self.settings)
-        if ai_warning:
-            self.statusBar().showMessage(f"Bỏ qua lọc AI: {ai_warning}", 10000)
-        doc = self.doc
 
         def task(progress, cancel):
-            # Lọc AI (nếu bật) trước để khỏi tạo giọng cho dòng không cần lồng; kết quả lọc có cache nên rất nhanh từ lần sau.
-            ai = apply_ai_filter(subs, doc, opts, classifier, cache, lambda p: progress(0.2 * p), cancel)
-            final, _ = drop_overlaps(ai.kept, opts.include_comments)
-            clips, errors = ensure_clips(final, voice, cache, synth, lambda p: progress(0.2 + 0.8 * p), cancel)
-            return ai, final, clips, errors
+            clips, errors = ensure_clips(final, voice, cache, synth, progress, cancel)
+            return clips, errors
 
         status, msg, val = run_task_with_progress(
-            self, "Tạo giọng đọc", f"Đang lọc và tạo giọng cho {len(subs)} phụ đề…", task)
+            self, "Tạo giọng đọc", f"Đang tạo giọng cho {len(final)} phụ đề…", task)
         if status == "error":
             self._error("Không tạo được giọng đọc", msg)
         elif status == "ok":
-            ai, final, clips, errors = val
-            if ai.warnings or errors:
-                self._show_warnings("Cảnh báo lồng tiếng", [*ai.warnings, *errors])
+            clips, errors = val
+            warnings = ([] if found_main else [NO_MAIN_WARNING]) + list(errors)
+            if warnings:
+                self._show_warnings("Cảnh báo lồng tiếng", warnings)
             skipped = len(self.doc.subtitles) - len(final)
             self.statusBar().showMessage(
                 f"Đã có giọng cho {len(clips)}/{len(final)} phụ đề"
-                + (f" ({skipped} chú thích/trùng giờ/trống/AI lọc được bỏ qua)" if skipped else ""), 8000)
+                + (f" ({skipped} chú thích/trùng giờ/trống/phụ đề phụ được bỏ qua)" if skipped else ""), 8000)
 
     def export_video(self) -> None:
         if self.video_path is None or self.video_info is None or self.doc is None:
@@ -842,14 +838,10 @@ class MainWindow(QMainWindow):
             return ask(str(exc))
         opts, voice, cache, doc, video = (dub_options(self.settings), dub_voice(self.settings),
                                           self._dub_cache_dir(), self.doc, self.video_path)
-        classifier, ai_warning = dub_classifier(self.settings)
-        if ai_warning:
-            self.statusBar().showMessage(f"Bỏ qua lọc AI: {ai_warning}", 10000)
         status, msg, val = run_task_with_progress(
-            self, "Lồng tiếng", "Đang lọc, tạo giọng và dựng âm thanh…",
+            self, "Lồng tiếng", "Đang tạo giọng và dựng âm thanh…",
             lambda progress, cancel: prepare_dub_audio(
-                doc, video, info.duration, voice, synth, cache, workdir, opts, ffmpeg, ffprobe, progress, cancel,
-                classifier=classifier))
+                doc, video, info.duration, voice, synth, cache, workdir, opts, ffmpeg, ffprobe, progress, cancel))
         if status == "cancel":
             return False
         if status == "error":

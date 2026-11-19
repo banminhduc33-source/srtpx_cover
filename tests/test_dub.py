@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from srtpx_cover.core.dub import (
-    RATE, DubOptions, atempo_filter, drop_overlaps, is_comment, split_dub_subtitles, build_dub_track, place_clip, prepare_dub_audio, select_dub_subtitles, slot_for, speed_for,
+    RATE, DubOptions, atempo_filter, drop_overlaps, is_comment, keep_main_subtitles, split_dub_subtitles, build_dub_track, place_clip, prepare_dub_audio, select_dub_subtitles, slot_for, speed_for,
 )
 from srtpx_cover.core.parser import read_srtpx
 from srtpx_cover.core.tts import TtsError, clip_path, ensure_clips, split_text
@@ -63,27 +63,53 @@ def test_overlap_keeps_only_main_block():
     assert [s.index for s in select_dub_subtitles(doc, include_comments=True)] == [1, 2, 3, 4, 5]
 
 
-def test_overlap_runs_after_ai_so_dropped_label_does_not_swallow_dialogue():
-    """Nhãn "Người phỏng vấn" hiện 0-7.7s bắt đầu sớm nhất: nếu xử lý trùng giờ trước AI thì nó nuốt hết thoại 0.2-7.5s."""
+def test_overlap_runs_after_main_filter_so_dropped_label_does_not_swallow_dialogue():
+    """Nhãn "Người phỏng vấn" hiện 0-7.7s bắt đầu sớm nhất: nếu xử lý trùng giờ trước khi loại phụ đề phụ thì nó nuốt hết thoại 0.2-7.5s."""
     from srtpx_cover.core.model import Box, SrtpxDocument, Subtitle
     box = Box(0, 10, 0, 10)
     mk = lambda i, a, b, t: Subtitle(i, a, b, t, box=box)
     doc = SrtpxDocument(subtitles=[
         mk(1, 0.0, 7.7, "Người phỏng vấn"), mk(2, 0.2, 1.3, "Cậu bị ép từ chức à?"),
         mk(3, 1.3, 3.6, "Đúng vậy"), mk(4, 7.8, 9.0, "Lời thoại sau")])
-    # Cách cũ: nhãn là block chính, thoại 2-3 bị nuốt trước khi AI kịp loại nhãn.
+    # Cách cũ: nhãn là block chính, thoại 2-3 bị nuốt trước khi kịp loại nhãn.
     assert [s.index for s in split_dub_subtitles(doc)[0]] == [1, 4]
-    # Cách mới: lấy hết ứng viên -> AI loại nhãn (#1) -> mới xử lý trùng giờ.
+    # Cách mới: lấy hết ứng viên -> loại nhãn (#1, phụ đề phụ) -> mới xử lý trùng giờ.
     cands, _, no_overlaps, _ = split_dub_subtitles(doc, resolve_overlaps=False)
     assert [s.index for s in cands] == [1, 2, 3, 4] and no_overlaps == []
-    after_ai = [s for s in cands if s.index != 1]
-    kept, overlaps = drop_overlaps(after_ai)
+    after_main = [s for s in cands if s.index != 1]
+    kept, overlaps = drop_overlaps(after_main)
     assert [s.index for s in kept] == [2, 3, 4] and overlaps == []
-    # Vẫn bỏ block trùng giờ thật sự sau AI; include_comments=True thì không bỏ gì.
+    # Vẫn bỏ block trùng giờ thật sự; include_comments=True thì không bỏ gì.
     both = [mk(5, 0.0, 3.0, "Câu chính"), mk(6, 1.0, 2.0, "Câu phụ chồng giờ")]
     kept, overlaps = drop_overlaps(both)
     assert [s.index for s in kept] == [5] and [s.index for s in overlaps] == [6]
     assert drop_overlaps(both, include_comments=True)[1] == []
+
+
+def _main_doc():
+    """3 câu cùng vị trí ở dưới (phụ đề chính) + 1 nhãn nằm lệch chỗ khác (phụ đề phụ)."""
+    from srtpx_cover.core.model import Box, SrtpxDocument, Subtitle
+    main_box, other = Box(100, 400, 500, 550), Box(500, 700, 420, 460)
+    return SrtpxDocument(res=(768, 576), subtitles=[
+        Subtitle(1, 0.0, 1.0, "Câu một", box=main_box), Subtitle(2, 2.0, 3.0, "Nhãn chữ", box=other),
+        Subtitle(3, 4.0, 5.0, "Câu hai", box=main_box), Subtitle(4, 6.0, 7.0, "Câu ba", box=main_box)])
+
+
+def test_only_main_captions_are_dubbed_others_skipped():
+    doc = _main_doc()
+    cands = split_dub_subtitles(doc, resolve_overlaps=False)[0]
+    kept, dropped, found = keep_main_subtitles(cands, doc)
+    assert found and [s.index for s in kept] == [1, 3, 4] and [s.index for s in dropped] == [2]
+    # include_comments=True (lồng tất cả): không lọc
+    kept, dropped, found = keep_main_subtitles(cands, doc, include_comments=True)
+    assert [s.index for s in kept] == [1, 2, 3, 4] and dropped == []
+
+
+def test_no_main_group_keeps_everything():
+    from srtpx_cover.core.model import Box, SrtpxDocument, Subtitle
+    doc = SrtpxDocument(res=(768, 576), subtitles=[Subtitle(1, 0.0, 1.0, "Chỉ một câu", box=Box(100, 400, 500, 550))])
+    kept, dropped, found = keep_main_subtitles(doc.subtitles, doc)
+    assert not found and [s.index for s in kept] == [1] and dropped == []
 
 
 def test_only_bottom_subtitles_are_dubbed_floating_text_is_skipped():
@@ -242,10 +268,10 @@ def test_end_to_end_cli_export_has_dubbed_audio(tmp_path, monkeypatch):
     info = subprocess.run([FFPROBE, "-v", "error", "-show_entries", "stream=codec_type,duration", "-of", "csv=p=0", str(out)],
                           capture_output=True, text=True, check=True).stdout
     assert "audio" in info and "video" in info
-    # lấy âm thanh ra, kiểm tra có tiếng quanh 10s (câu 3) và im sau 12s
+    # file mẫu chỉ có #2, #3 cùng vị trí (phụ đề chính): có tiếng quanh 10s, còn phụ đề phụ #1 (0.3s) và #4 (11.2s) thì im
     pcm = subprocess.run([FFMPEG, "-v", "error", "-i", str(out), "-vn", "-ac", "1", "-ar", "8000", "-f", "s16le", "-"],
                          capture_output=True, check=True).stdout
     a = array("h"); a.frombytes(pcm)
     def active(x, y): return sum(1 for v in a[int(x * 8000):int(y * 8000)] if abs(v) > 300)
-    assert active(0.3, 0.8) > 0 and active(12, 14) == 0   # câu 1 đọc từ 0.27s; câu 5 (15.3s) nằm ngoài video
-    assert active(9.5, 11.9) > 0
+    assert active(0.3, 0.8) == 0 and active(12, 14) == 0   # #1 (0.27s) và #5 là phụ đề phụ nên không đọc
+    assert active(9.5, 10.9) > 0

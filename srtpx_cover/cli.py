@@ -18,7 +18,6 @@ from .core.ffmpeg_tools import FfmpegError, ffmpeg_major_version, find_tool, pro
 from .core.vertical import (VerticalOptions, build_vertical_command, build_vertical_filter, find_logo, logo_size,
                             plan_vertical)
 from .core.dub import DEFAULT_MAX_SPEED, DubOptions, prepare_dub_audio
-from .core.dubfilter import DEFAULT_MODEL as DEFAULT_GEMINI_MODEL, DubFilterError, gemini_classifier
 from .core.tts import DEFAULT_VOICE, TtsError, tiktok_synthesizer
 from .core.fonts import FontError, FontSpec, default_font_chain, load_chain, parse_font_path
 from .core.geometry import DEFAULT_MARGIN_PX
@@ -55,14 +54,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dub", action="store_true", help="Lồng tiếng TikTok TTS theo mốc phụ đề (cần sessionid)")
     p.add_argument("--sessionid", default=None, help="sessionid TikTok (mặc định lấy từ biến môi trường TIKTOK_SESSIONID)")
     p.add_argument("--voice", default=DEFAULT_VOICE, help=f"Mã giọng, mặc định {DEFAULT_VOICE}")
-    p.add_argument("--dub-comments", action="store_true", help="Lồng cả chú thích (có *, trong ngoặc) và block trùng giờ; mặc định bỏ qua")
+    p.add_argument("--dub-comments", action="store_true", help="Lồng cả chú thích (có *, trong ngoặc), block trùng giờ và phụ đề phụ; mặc định chỉ lồng phụ đề chính")
     p.add_argument("--orig-volume", type=float, default=0.3, help="Âm lượng âm thanh gốc khi lồng tiếng (0..1), mặc định 0.3")
     p.add_argument("--voice-volume", type=float, default=1.0, help="Âm lượng giọng đọc, mặc định 1.0")
     p.add_argument("--max-speed", type=float, default=DEFAULT_MAX_SPEED, help=f"Trần tua nhanh khi giọng dài hơn mốc, mặc định {DEFAULT_MAX_SPEED}")
-    p.add_argument("--ai-filter", action="store_true",
-                   help="Dùng Gemini lọc các dòng không cần lồng (tiếng động, chữ trên màn hình...) trước khi đọc; cần --dub")
-    p.add_argument("--gemini-key", default=None, help="API key Gemini (mặc định lấy từ biến môi trường GEMINI_API_KEY)")
-    p.add_argument("--gemini-model", default=DEFAULT_GEMINI_MODEL, help=f"Model Gemini để lọc, mặc định {DEFAULT_GEMINI_MODEL}")
     p.add_argument("--tts-cache", default=str(APP_DIR / ".tts_cache"), help="Thư mục cache giọng từng câu")
     p.add_argument("--no-main-captions", action="store_true",
                    help="Tắt chuẩn hóa phụ đề chính (mặc định: nhóm phụ đề cùng vị trí đông nhất dùng chung một hộp cố định, "
@@ -79,7 +74,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         return _run(args)
-    except (FfmpegError, FontError, SrtpxError, TtsError, DubFilterError) as exc:
+    except (FfmpegError, FontError, SrtpxError, TtsError) as exc:
         print(f"Lỗi: {exc}", file=sys.stderr)
         return 1
 
@@ -122,26 +117,20 @@ def _run(args: argparse.Namespace) -> int:
         if args.dub and not args.dump_filter:
             sid = args.sessionid or os.environ.get("TIKTOK_SESSIONID", "")
             dub_opts = DubOptions(include_comments=args.dub_comments, max_speed=args.max_speed,
-                                  orig_volume=args.orig_volume, voice_volume=args.voice_volume,
-                                  ai_model=args.gemini_model)
-            classifier = None
-            if args.ai_filter:
-                classifier = gemini_classifier(args.gemini_key or os.environ.get("GEMINI_API_KEY", ""), args.gemini_model)
-            print("Đang lọc phụ đề và tạo giọng đọc…" if classifier else "Đang tạo giọng đọc…")
+                                  orig_volume=args.orig_volume, voice_volume=args.voice_volume)
+            print("Đang tạo giọng đọc…")
             mixed, rep, dub_warnings = prepare_dub_audio(
                 parsed.document, args.video, video.duration, args.voice, tiktok_synthesizer(sid),
-                Path(args.tts_cache), workdir, dub_opts, ffmpeg, ffprobe, classifier=classifier)
+                Path(args.tts_cache), workdir, dub_opts, ffmpeg, ffprobe)
             spoken = rep.spoken
             for w in dub_warnings:
                 print(f"[lồng tiếng] {w}", file=sys.stderr)
             texts = {s.index: " ".join(s.text.split()) for s in parsed.document.subtitles}
             spans = {s.index: f"{s.start:.1f}s-{s.end:.1f}s" for s in parsed.document.subtitles}
             for label, ids in (("chú thích", rep.skipped_comments), ("trùng giờ", rep.skipped_overlap),
-                               ("chữ bay lơ lửng", rep.skipped_floating)):
+                               ("chữ bay lơ lửng", rep.skipped_floating), ("phụ đề phụ", rep.skipped_not_main)):
                 for i in ids:   # luật cứng bỏ dòng nào thì in ra để kiểm tra
                     print(f"[bỏ qua: {label}] #{i} ({spans.get(i, '?')}) \"{texts.get(i, '')}\"")
-            for i in rep.skipped_ai:
-                print(f"[lọc AI] bỏ #{i} ({spans.get(i, '?')}) \"{texts.get(i, '')}\" — {rep.ai_reasons.get(i) or 'không rõ lý do'}")
             print(rep.summary())
 
         doc = parsed.document
