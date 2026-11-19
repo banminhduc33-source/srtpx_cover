@@ -113,7 +113,9 @@ def set_box_at(sub: Subtitle, t: float, box: Box) -> None:
         return
     i = find_keyframe(sub, t)
     if i is not None:
-        sub.keyframes[i] = Keyframe(sub.keyframes[i].time, box)
+        old = sub.keyframes[i]
+        poly = map_polygon(old.polygon, old.box, box) if old.polygon is not None else None   # đa giác đi theo hộp
+        sub.keyframes[i] = Keyframe(old.time, box, poly)
         return
     sub.keyframes.append(Keyframe(t, box))
     sub.keyframes.sort(key=lambda k: k.time)
@@ -165,7 +167,7 @@ def copy_keyframes(src: Subtitle, dst: Subtitle) -> bool:
         t = round(max(0.0, k.time + off), 3)
         if out and t <= out[-1].time:
             continue
-        out.append(Keyframe(t, k.box))
+        out.append(Keyframe(t, k.box, k.polygon))
     dst.box = None
     dst.polygon = None
     dst.keyframes = out

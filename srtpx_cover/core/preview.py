@@ -110,7 +110,7 @@ class PreviewModel:
             if not is_visible(sub, t):
                 continue
             box = pixel_box(sub, t, self.scale, self.margin, self.video_size)
-            poly = video_polygon(sub, self.scale, self.margin, self.video_size)
+            poly = video_polygon(sub, self.scale, self.margin, self.video_size, t)
             if box.w <= 0 or box.h <= 0:
                 continue  # bị kẹp hết ra ngoài khung hình (giống bộ xuất)
             vb = video_box(sub, t, self.scale, self.margin, self.video_size)

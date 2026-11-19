@@ -207,19 +207,54 @@ def expand_polygon(pts: Sequence[tuple[float, float]], d: float) -> list[tuple[f
     return out
 
 
+def _box_corners(b: Box) -> tuple[tuple[float, float], ...]:
+    return ((b.x1, b.y1), (b.x2, b.y1), (b.x2, b.y2), (b.x1, b.y2))
+
+
+def has_keyframe_polygon(sub: Subtitle) -> bool:
+    return any(k.polygon is not None for k in sub.keyframes)
+
+
+def interpolate_polygon(sub: Subtitle, t: float, smooth: bool = False) -> tuple[tuple[float, float], ...] | None:
+    """Đa giác (toạ độ #res) tại giờ t: nội suy 8 toạ độ góc giữa các keyframe (keyframe không có đa giác dùng 4 góc của hộp thẳng).
+    None nếu không keyframe nào có đa giác. Ngoài khoảng keyframe thì giữ keyframe gần nhất."""
+    kfs = sub.keyframes
+    if not kfs or not has_keyframe_polygon(sub):
+        return None
+    polys = [k.polygon if k.polygon is not None else _box_corners(k.box) for k in kfs]
+    if t <= kfs[0].time:
+        return tuple(polys[0])
+    if t >= kfs[-1].time:
+        return tuple(polys[-1])
+    ts = [k.time for k in kfs]
+    if smooth and len(kfs) >= 2:
+        return tuple((_pchip(ts, [p[i][0] for p in polys], t), _pchip(ts, [p[i][1] for p in polys], t)) for i in range(4))
+    for a, b, pa, pb in zip(kfs, kfs[1:], polys, polys[1:]):
+        if a.time <= t <= b.time:
+            f = (t - a.time) / (b.time - a.time)
+            return tuple((pa[i][0] + (pb[i][0] - pa[i][0]) * f, pa[i][1] + (pb[i][1] - pa[i][1]) * f) for i in range(4))
+    raise AssertionError("không tới được: keyframe đã sắp theo thời gian")  # pragma: no cover
+
+
 def video_polygon(
     sub: Subtitle,
     scale: Scale,
     margin: float,
     video_size: tuple[int, int] | None = None,
+    t: float | None = None,
+    smooth: bool = False,
 ) -> list[tuple[float, float]] | None:
     """Đa giác che (số thực, điểm ảnh video thực): scale từ #res rồi nới ra `margin`. None nếu phụ đề không có đa giác.
 
+    Hộp cố định: đa giác của phụ đề. Có keyframe và `t`: đa giác nội suy tại t (xem interpolate_polygon).
     Không kẹp vào khung hình: phần ngoài khung bị cắt tự nhiên khi vẽ lên video."""
-    if sub.polygon is None:
+    poly = sub.polygon
+    if poly is None and t is not None:
+        poly = interpolate_polygon(sub, t, smooth)
+    if poly is None:
         return None
     margin = min(max(margin, 0.0), MAX_MARGIN_PX)
-    return expand_polygon([(x * scale.sx, y * scale.sy) for x, y in sub.polygon], margin)
+    return expand_polygon([(x * scale.sx, y * scale.sy) for x, y in poly], margin)
 
 
 def polygon_bounds(pts: Sequence[tuple[float, float]]) -> tuple[float, float, float, float]:
