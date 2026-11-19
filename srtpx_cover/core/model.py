@@ -58,6 +58,9 @@ class Subtitle:
     # Đa giác 4 góc ((x, y) theo toạ độ #res) của hộp che khi chữ gốc NGHIÊNG. Chỉ dùng với hộp cố định (không keyframe):
     # hộp đen vẽ theo đa giác này; `box` vẫn là hộp thẳng dùng đặt chữ trắng (và là hộp dự phòng cho bộ đọc cũ).
     polygon: tuple[tuple[float, float], ...] | None = None
+    # True: cho phép tự ngắt dòng một câu chỉ có một dòng khi hộp (lúc nằm yên) CAO HƠN RỘNG, để chữ to hơn thay vì co nhỏ cho vừa chiều
+    # ngang (core/layout.py: wrap_lines). Chỉ do bước "phụ đề chính" (core/maincap.py) đặt cho PHỤ ĐỀ PHỤ khi xuất; không ghi vào file .srtpx.
+    wrap: bool = False
 
     def validate(self) -> None:
         """Ném ValueError nếu vi phạm bất biến ở trên."""

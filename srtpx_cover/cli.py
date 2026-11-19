@@ -66,6 +66,8 @@ def build_parser() -> argparse.ArgumentParser:
                         "chữ cỡ cố định, chia cụm vài chữ; phụ đề phụ giữ nguyên)")
     p.add_argument("--main-words", type=int, default=DEFAULT_WORDS,
                    help=f"Tối đa số chữ mỗi cụm phụ đề chính, mặc định {DEFAULT_WORDS}")
+    p.add_argument("--no-wrap-secondary", action="store_true",
+                   help="Phụ đề phụ có hộp cao hơn rộng KHÔNG tự xuống dòng (mặc định: tự xuống dòng để chữ to hơn)")
     p.add_argument("--no-bg-color", action="store_true",
                    help="Phụ đề phụ dùng hộp đen (mặc định: hộp che phụ đề phụ lấy màu nền ngay quanh hộp, chỉ phụ đề chính giữ hộp đen)")
     p.add_argument("--no-vertical", action="store_true",
@@ -147,7 +149,7 @@ def _run(args: argparse.Namespace) -> int:
                 opts = dataclasses.replace(opts, box_colors=colors)
                 print(f"[màu nền] {len(colors)}/{len(secondary_indices(doc) or ())} phụ đề phụ dùng màu nền thay hộp đen.")
         if not args.no_main_captions and opts.draw_text:
-            mc_opts = MainCaptionOptions(words_per_chunk=args.main_words)
+            mc_opts = MainCaptionOptions(words_per_chunk=args.main_words, wrap_secondary=not args.no_wrap_secondary)
             doc, mc = apply_main_captions(doc, mc_opts, spoken, chain)
             print(f"[phụ đề chính] {mc.message()}")
 
