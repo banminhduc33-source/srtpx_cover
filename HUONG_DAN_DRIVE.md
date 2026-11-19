@@ -61,5 +61,5 @@ Theo dõi tiến độ ở tab **Actions** của repo.
 ## Lồng tiếng trên GitHub Actions (giấu sessionid)
 - Repo → Settings → Secrets and variables → Actions → **New repository secret** → tên `TIKTOK_SESSIONID`, dán giá trị cookie `sessionid` vào.
 - Có secret này thì job tự lồng tiếng Việt (`BV074_streaming`), âm gốc 30%, giọng đọc 100%. Không có thì xuất như cũ.
-- **Lọc AI (bỏ dòng không cần lồng như tiếng động, chữ trên màn hình):** thêm secret `GEMINI_API_KEY` (key lấy ở https://aistudio.google.com/apikey). Có secret này job tự thêm `--ai-filter`; không có thì lồng mọi dòng như cũ. Model mặc định `gemini-3.5-flash-lite`, đổi bằng biến (tab **Variables**) `GEMINI_MODEL`. Gemini lỗi tạm thời thì job tự thử lại (job có giới hạn 180 phút); key sai thì job báo lỗi và file chuyển sang `failed/` kèm log.
+- Chỉ các **phụ đề chính** (nhóm cùng vị trí đông nhất) được lồng tiếng; phụ đề phụ bị bỏ qua. Không cần thêm secret nào khác.
 - Tuyệt đối không ghi sessionid vào code, README, file .srtpx hay commit. Repo public vẫn an toàn vì secret không hiện trong code hay log.

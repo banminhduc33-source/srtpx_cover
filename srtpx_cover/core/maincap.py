@@ -129,6 +129,23 @@ def find_main_group(subs: Sequence[Subtitle], tol_x: float, tol_y: float) -> lis
     return sorted(set(best) | inside)
 
 
+def _main_positions(doc: SrtpxDocument, options: MainCaptionOptions) -> list[int]:
+    """Vị trí (trong `doc.subtitles`) của các phụ đề thuộc nhóm chính. Có thể ít hơn `options.min_group` (khi đó coi như không có)."""
+    subs = doc.subtitles
+    fw, fh = _frame_size(doc)
+    # Phụ đề chữ nghiêng (có đa giác) giữ nguyên như phụ đề phụ: chuẩn hóa hộp ngang/dọc sẽ làm đa giác mất khớp với chữ gốc.
+    flat = [j for j, s in enumerate(subs) if s.polygon is None]
+    return [flat[j] for j in find_main_group([subs[j] for j in flat], fw * options.tol_x_ratio, fh * options.tol_y_ratio)]
+
+
+def main_group_indices(doc: SrtpxDocument, options: MainCaptionOptions = MainCaptionOptions()) -> set[int] | None:
+    """Tập `Subtitle.index` của các phụ đề chính (cùng nhóm với khi xuất video); None nếu không tìm được nhóm chính."""
+    group = _main_positions(doc, options)
+    if len(group) < options.min_group:
+        return None
+    return {doc.subtitles[j].index for j in group}
+
+
 def _mean_box(boxes: Sequence[Box]) -> Box:
     n = len(boxes)
     return Box(sum(b.x1 for b in boxes) / n, sum(b.x2 for b in boxes) / n,
@@ -217,10 +234,7 @@ def apply_main_captions(
     total = len(subs)
     if not subs:
         return doc, MainCaptionInfo(False, "không có phụ đề")
-    fw, fh = _frame_size(doc)
-    # Phụ đề chữ nghiêng (có đa giác) giữ nguyên như phụ đề phụ: chuẩn hóa hộp ngang/dọc sẽ làm đa giác mất khớp với chữ gốc.
-    flat = [j for j, s in enumerate(subs) if s.polygon is None]
-    group = [flat[j] for j in find_main_group([subs[j] for j in flat], fw * options.tol_x_ratio, fh * options.tol_y_ratio)]
+    group = _main_positions(doc, options)
     if len(group) < options.min_group:
         return doc, MainCaptionInfo(False, f"nhóm cùng vị trí đông nhất chỉ có {len(group)} dòng", n_total=total)
 
