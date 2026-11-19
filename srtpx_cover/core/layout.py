@@ -103,13 +103,75 @@ class TextPlan:
         return (LINE_HEIGHT_FACTOR * self.n <= box_h) and (self.em_width <= box_w)
 
 
+MAX_WRAP_LINES = 12
+
+
+def wrap_lines(line: str, font: FontData, box_w: float, box_h: float, max_lines: int = MAX_WRAP_LINES) -> tuple[str, ...]:
+    """Ngắt MỘT dòng chữ thành nhiều dòng (chỉ ngắt ở khoảng trắng) để cỡ chữ vừa hộp box_w x box_h là LỚN NHẤT.
+
+    Thử từng số dòng k = 1..max_lines: với mỗi k chia các chữ thành k dòng sao cho dòng rộng nhất hẹp nhất (hòa: các dòng đều
+    nhau hơn), cỡ chữ = min(box_h / (1,2 x k), box_w / độ rộng dòng rộng nhất). Chọn k cho cỡ chữ lớn nhất; hòa thì ít dòng hơn.
+    Một chữ duy nhất không ngắt được (không cắt giữa chữ) nên trả lại nguyên dòng."""
+    words = line.split()
+    n = len(words)
+    if n < 2 or box_w <= 0 or box_h <= 0:
+        return (line,)
+    space = text_width(font, " ", 1.0)
+    pre = [0.0]
+    for w in words:
+        pre.append(pre[-1] + text_width(font, w, 1.0))
+
+    def width(i: int, j: int) -> float:                  # độ rộng (em) của chữ i..j-1 nối bằng khoảng trắng; text_width tuyến tính nên cộng được
+        return pre[j] - pre[i] + (j - i - 1) * space
+
+    inf = (float("inf"), float("inf"))
+    best_size, best_cuts = -1.0, None
+    for k in range(1, min(n, max(1, max_lines)) + 1):
+        dp = [[inf] * (n + 1) for _ in range(k + 1)]     # dp[kk][j] = (độ rộng lớn nhất, tổng bình phương) tốt nhất chia j chữ đầu thành kk dòng
+        cut = [[0] * (n + 1) for _ in range(k + 1)]
+        dp[0][0] = (0.0, 0.0)
+        for kk in range(1, k + 1):
+            for j in range(kk, n + 1):
+                for i in range(kk - 1, j):
+                    prev = dp[kk - 1][i]
+                    if prev == inf:
+                        continue
+                    w = width(i, j)
+                    cand = (max(prev[0], w), prev[1] + w * w)
+                    if cand < dp[kk][j]:
+                        dp[kk][j], cut[kk][j] = cand, i
+        max_w = dp[k][n][0]
+        size = box_h / (LINE_HEIGHT_FACTOR * k)
+        if max_w > 0:
+            size = min(size, box_w / max_w)
+        if size > best_size + 1e-9:                       # chỉ lấy khi lớn hơn hẳn: hòa thì giữ số dòng ít hơn
+            bounds, j = [], n
+            for kk in range(k, 0, -1):
+                bounds.append((cut[kk][j], j))
+                j = cut[kk][j]
+            best_size, best_cuts = size, bounds[::-1]
+    assert best_cuts is not None
+    return tuple(" ".join(words[i:j]) for i, j in best_cuts)
+
+
+def _rest_box(sub: Subtitle):
+    """Hộp lúc nằm yên: keyframe cuối nếu có, không thì hộp cố định."""
+    return sub.keyframes[-1].box if sub.keyframes else sub.box
+
+
 def plan_text(sub: Subtitle, chain: Sequence[FontData], scale_y: float = 1.0) -> tuple[FontChoice, TextPlan]:
     """Chọn font và tách dòng cho MỘT phụ đề. Cố định suốt thời gian hiển thị.
 
-    `scale_y` (px video thực / toạ độ #res theo chiều dọc) đổi `sub.font_px` (cỡ tối đa) sang px của video thực."""
+    `scale_y` (px video thực / toạ độ #res theo chiều dọc) đổi `sub.font_px` (cỡ tối đa) sang px của video thực.
+
+    Phụ đề có `wrap` (phụ đề phụ khi xuất), chỉ một dòng, hộp lúc nằm yên CAO HƠN RỘNG: cho chữ xuống dòng (`wrap_lines`) để chữ
+    to hơn thay vì co nhỏ cho vừa chiều ngang hẹp. Còn lại giữ nguyên các dòng có sẵn trong chữ gốc."""
     text = fold_for_font(sub.text, chain)
     choice = choose_font(text, chain)
     lines = tuple(_normalize_lines(text))
+    rest = _rest_box(sub)
+    if sub.wrap and len(lines) == 1 and rest is not None and rest.height > rest.width > 0:
+        lines = wrap_lines(lines[0], choice.font, rest.width * scale_y, rest.height * scale_y)
     em = max((text_width(choice.font, ln, 1.0) for ln in lines), default=0.0)
     fixed = None if sub.font_px is None else sub.font_px * scale_y
     return choice, TextPlan(lines, em, fixed)

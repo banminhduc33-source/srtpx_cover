@@ -14,6 +14,9 @@ Phim thường có MỘT chỗ đặt phụ đề (cùng vị trí, chỉ lệch
    không trả mốc từng từ nên mốc tính theo tỷ lệ số âm tiết (mỗi chữ tiếng Việt ~ một âm tiết), cộng trọng số nghỉ ở dấu câu.
    Không lồng tiếng thì chia đều theo [start, end] của phụ đề.
 
+Phụ đề PHỤ (ngoài nhóm chính) giữ nguyên hộp và keyframe; riêng phụ đề phụ có hộp CAO HƠN RỘNG và chỉ một dòng thì được tự xuống dòng
+(`Subtitle.wrap`, `layout.wrap_lines`) để chữ to hơn thay vì co nhỏ cho vừa chiều ngang hẹp.
+
 Hộp luôn liền mạch từ `start` tới hết phụ đề (cụm cuối giữ tới `end`) để che kín chữ gốc dưới video.
 Hàm trả về bản sao tài liệu; tài liệu gốc (đang chỉnh trong giao diện) không bị đổi.
 """
@@ -42,6 +45,7 @@ class MainCaptionOptions:
     tol_x_ratio: float = 0.05             # dung sai tâm theo chiều ngang, tỷ lệ chiều rộng khung hình
     tol_y_ratio: float = 0.025            # dung sai tâm theo chiều dọc, tỷ lệ chiều cao khung hình
     min_group: int = 2                    # nhóm đông nhất ít hơn số này thì coi như không có phụ đề chính
+    wrap_secondary: bool = True           # phụ đề PHỤ có hộp cao hơn rộng được tự xuống dòng (layout.wrap_lines); False = giữ một dòng
 
 
 @dataclass(frozen=True)
@@ -75,6 +79,12 @@ def _rest_box(sub: Subtitle) -> Box:
         return sub.keyframes[-1].box
     assert sub.box is not None, "Phụ đề thiếu cả hộp cố định lẫn keyframe"
     return sub.box
+
+
+def _can_wrap(sub: Subtitle) -> bool:
+    """Phụ đề phụ nào có thể được cho xuống dòng: chữ một dòng, từ 2 chữ trở lên, hộp lúc nằm yên CAO HƠN RỘNG."""
+    box = _rest_box(sub)
+    return len(sub.text.split()) >= 2 and "\n" not in sub.text.strip() and box.height > box.width > 0
 
 
 def _frame_size(doc: SrtpxDocument) -> tuple[float, float]:
@@ -268,7 +278,8 @@ def apply_main_captions(
     n_chunks = 0
     for j, s in enumerate(subs):
         if j not in main_pos:
-            out.append(s)
+            # phụ đề phụ giữ nguyên (cùng đối tượng); chỉ khi có thể xuống dòng (một dòng nhiều chữ, hộp cao hơn rộng) mới đánh dấu wrap
+            out.append(replace(s, wrap=True) if options.wrap_secondary and _can_wrap(s) else s)
             continue
         if id(s) not in kept_ids:   # không có chữ, hoặc trùng giờ: chỉ che bằng hộp cố định
             out.append(replace(s, text="", box=own_box(s), keyframes=[], font_px=None))

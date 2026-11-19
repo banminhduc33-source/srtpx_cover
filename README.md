@@ -60,6 +60,13 @@ Vì mốc cụm cần thời lượng giọng đọc nên khi xuất, **lồng t
 
 Dòng lệnh: mặc định bật; `--no-main-captions` để tắt, `--main-words 5`. Dùng `--no-text` thì không chuẩn hóa (chỉ vẽ hộp đen như cũ).
 
+## Phụ đề phụ: hộp cao hơn rộng thì cho chữ xuống dòng
+Bình thường chữ **không tự xuống dòng** (giữ đúng các dòng có sẵn, co cỡ chữ cho vừa chiều ngang). Với **phụ đề phụ** (ngoài nhóm phụ đề chính) có hộp lúc nằm yên **cao hơn rộng** (keyframe cuối nếu có keyframe), chữ chỉ một dòng từ 2 chữ trở lên được **tự ngắt dòng ở khoảng trắng** để chữ to hơn thay vì co nhỏ theo chiều ngang hẹp (`layout.wrap_lines`, `Subtitle.wrap`):
+- App thử từng số dòng 1..12, chia các chữ cho dòng dài nhất ngắn nhất (hòa: các dòng đều nhau hơn) và chọn số dòng cho **cỡ chữ lớn nhất**; hộp ngang vẫn một dòng.
+- Không cắt giữa một chữ; chữ đã có sẵn nhiều dòng thì giữ nguyên; phụ đề chính không bị ảnh hưởng.
+- Chỉ áp dụng khi **xuất** (cùng bước "Phụ đề chính", cần tìm được nhóm chính), preview vẫn hiện như cũ. Tắt bằng `MainCaptionOptions(wrap_secondary=False)` hoặc `--no-wrap-secondary` ở dòng lệnh. Không ghi vào file `.srtpx`.
+- Nửa còn lại của lỗi "chữ nhảy chỗ thì KF trượt chậm" nằm ở bộ bóc `hardsub-extract-tool` (tách block mới khi chữ phụ nhảy chỗ, xem README bên đó) vì chỉ nơi đó mới có dữ liệu từng khung hình.
+
 ## Khung 9:16 + logo (tự động sau khi xuất)
 Xuất xong, app dựng tiếp video dọc **1080x1920** từ video vừa xuất (bỏ tích ở hộp thoại Xuất, hoặc `--no-vertical` ở dòng lệnh để tắt):
 - **Nền:** bản sao video phóng to phủ kín khung 9:16, làm mờ, hạ độ sáng còn **35%**.

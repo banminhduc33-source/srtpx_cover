@@ -64,6 +64,8 @@ def build_parser() -> argparse.ArgumentParser:
                         "chữ cỡ cố định, chia cụm vài chữ; phụ đề phụ giữ nguyên)")
     p.add_argument("--main-words", type=int, default=DEFAULT_WORDS,
                    help=f"Tối đa số chữ mỗi cụm phụ đề chính, mặc định {DEFAULT_WORDS}")
+    p.add_argument("--no-wrap-secondary", action="store_true",
+                   help="Phụ đề phụ có hộp cao hơn rộng KHÔNG tự xuống dòng (mặc định: tự xuống dòng để chữ to hơn)")
     p.add_argument("--no-vertical", action="store_true",
                    help="Không dựng khung 9:16 (mặc định: sau khi xuất, dựng thêm nền mờ + logo thành video dọc 1080x1920)")
     p.add_argument("--dump-filter", metavar="FILE", help="Ghi filter script ra file này để kiểm tra rồi thoát")
@@ -135,7 +137,7 @@ def _run(args: argparse.Namespace) -> int:
 
         doc = parsed.document
         if not args.no_main_captions and opts.draw_text:
-            mc_opts = MainCaptionOptions(words_per_chunk=args.main_words)
+            mc_opts = MainCaptionOptions(words_per_chunk=args.main_words, wrap_secondary=not args.no_wrap_secondary)
             doc, mc = apply_main_captions(doc, mc_opts, spoken, chain)
             print(f"[phụ đề chính] {mc.message()}")
 
