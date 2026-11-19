@@ -48,6 +48,8 @@ class ExportOptions:
     codec: str = "libx264"          # libx264 hoặc libx265
     start: float | None = None      # xuất theo đoạn: giây bắt đầu (giờ video gốc)
     end: float | None = None        # giây kết thúc; None = tới hết video
+    # {Subtitle.index: (R, G, B)}: màu hộp che riêng cho từng phụ đề (xem bgcolor.py); phụ đề không có trong đây dùng hộp đen
+    box_colors: dict[int, tuple[int, int, int]] | None = field(default=None, compare=False, repr=False)
 
     def segment_seconds(self, total: float) -> float:
         """Thời lượng thực sẽ xuất (để tính thanh tiến trình)."""
@@ -170,6 +172,8 @@ def build_filter_script(
         k0, k1 = rng
 
         has_text = options.draw_text and bool(sub.text.strip())
+        box_rgb = (options.box_colors or {}).get(sub.index)
+        box_color = ("0x%02x%02x%02x" % box_rgb) if box_rgb else "black"
         boxes_vary = len({(kf.box.x1, kf.box.x2, kf.box.y1, kf.box.y2) for kf in sub.keyframes}) > 1
 
         # --- phụ đề CÓ ĐA GIÁC (chữ gốc nghiêng): hộp đen vẽ theo đa giác, chữ trắng đặt theo hộp thẳng `box` (animlayer.py)
@@ -191,7 +195,7 @@ def build_filter_script(
                 directory=workdir / f"anim{sub.index:04d}", font_path=font_path, face_index=face,
                 lines=lines, k0=k0, k1=k1, ox=ox, oy=oy, cw=cw, ch=ch,
                 geometry=lambda k, vb=vb, size=size: (vb.x1, vb.x2, vb.y1, vb.y2, size),
-                polygon=tuple(poly),
+                polygon=tuple(poly), color=box_rgb or (0, 0, 0),
             )
             emit_layer(lay, k0, k1, ox, oy)
             continue
@@ -226,6 +230,7 @@ def build_filter_script(
             lay = AnimLayer(
                 directory=workdir / f"anim{sub.index:04d}", font_path=font_path, face_index=face,
                 lines=lines, k0=k0, k1=k1, ox=ox, oy=oy, cw=cw, ch=ch, geometry=geom_p, polygon_fn=poly_p,
+                color=box_rgb or (0, 0, 0),
             )
             emit_layer(lay, k0, k1, ox, oy)
             continue
@@ -249,6 +254,7 @@ def build_filter_script(
                 directory=workdir / f"anim{sub.index:04d}",
                 font_path=str(choice.font.spec.path), face_index=choice.font.spec.face_index,
                 lines=plan.lines, k0=k0, k1=k1, ox=ox, oy=oy, cw=cw, ch=ch, geometry=geom,
+                color=box_rgb or (0, 0, 0),
             )
             emit_layer(lay, k0, k1, ox, oy)
             continue
@@ -268,7 +274,7 @@ def build_filter_script(
             if b.w <= 0 or b.h <= 0:
                 continue  # hộp bị kẹp hết ra ngoài khung hình
             parts.append(
-                f"drawbox=x={b.x1}:y={b.y1}:w={b.w}:h={b.h}:color=black:t=fill:"
+                f"drawbox=x={b.x1}:y={b.y1}:w={b.w}:h={b.h}:color={box_color}:t=fill:"
                 + _enable((a_ - 0.5) * den / num, (z + 0.5) * den / num)
             )
 

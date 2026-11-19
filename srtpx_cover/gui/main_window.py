@@ -1,6 +1,7 @@
 """Cửa sổ chính (Mốc 6: hoàn thiện). Mở video, nạp .srtpx, preview, kéo hộp, sửa chữ/giờ, thêm/xóa/nhân đôi, keyframe, lưu, undo/redo."""
 from __future__ import annotations
 
+import dataclasses
 import logging
 import math
 import shutil
@@ -34,6 +35,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..core.bgcolor import sample_secondary_colors
 from ..core.dub import NO_MAIN_WARNING, drop_overlaps, keep_main_subtitles, prepare_dub_audio, split_dub_subtitles
 from ..core.tts import TtsError, ensure_clips, tiktok_synthesizer
 from ..core.export import ExportOptions, build_command, build_filter_script, write_textfiles
@@ -741,7 +743,8 @@ class MainWindow(QMainWindow):
         default = str(Path(self.video_path).with_name(Path(self.video_path).stem + "_che.mp4"))
         vertical_on = str(self.settings.value("export/vertical", "true")).lower() in ("true", "1")
         main_on = str(self.settings.value("export/main_captions", "true")).lower() in ("true", "1")
-        dlg = ExportDialog(info.duration, str(self.settings.value("dirs/export", default)), self, vertical_on, main_on)
+        bg_on = str(self.settings.value("export/bg_color", "true")).lower() in ("true", "1")
+        dlg = ExportDialog(info.duration, str(self.settings.value("dirs/export", default)), self, vertical_on, main_on, bg_on)
         if not dlg.exec():
             return
         out = dlg.output_path()
@@ -753,6 +756,8 @@ class MainWindow(QMainWindow):
         self.settings.setValue("export/vertical", vertical)
         main_captions = dlg.main_captions()
         self.settings.setValue("export/main_captions", main_captions)
+        bg_color = dlg.bg_color()
+        self.settings.setValue("export/bg_color", bg_color)
         a, b = dlg.segment()
         s = self.settings
         opts = ExportOptions(
@@ -773,6 +778,21 @@ class MainWindow(QMainWindow):
                 if res is False:
                     return  # người dùng hủy
                 mixed, spoken = res
+            if bg_color:
+                # Lấy màu nền cho phụ đề phụ trên phụ đề GỐC, trước khi chuẩn hóa phụ đề chính.
+                st, bg_msg, bg_val = run_task_with_progress(
+                    self, "Lấy màu nền", "Đang lấy màu nền cho phụ đề phụ…",
+                    lambda progress, cancel: sample_secondary_colors(
+                        self.doc, self.video_path, info, opts.margin, ffmpeg, progress, cancel))
+                if st == "cancel":
+                    return
+                if st == "ok":
+                    colors, bg_warnings = bg_val
+                    if colors:
+                        opts = dataclasses.replace(opts, box_colors=colors)
+                    font_warnings = [*font_warnings, *bg_warnings]
+                else:
+                    font_warnings = [*font_warnings, f"Không lấy được màu nền phụ đề phụ (dùng hộp đen): {bg_msg}"]
             doc = self.doc
             if main_captions:
                 doc, mc = apply_main_captions(self.doc, MainCaptionOptions(), spoken, chain)

@@ -164,13 +164,15 @@ class ExportDialog(QDialog):
     """Chọn nơi lưu và đoạn cần xuất (cả video hoặc từ giây A tới giây B)."""
 
     def __init__(self, duration: float, default_path: str, parent: QWidget | None = None, vertical: bool = True,
-                 main_captions: bool = True) -> None:
+                 main_captions: bool = True, bg_color: bool = True) -> None:
         super().__init__(parent)
         self.setWindowTitle("Xuất video")
         self.vertical_box = QCheckBox("Dựng khung 9:16 (nền mờ tối 35% + logo GenshinViet.net)")
         self.vertical_box.setChecked(vertical)
         self.main_box = QCheckBox("Chuẩn hóa phụ đề chính: hộp đen ngang theo file x1,025, dọc trung bình, chữ co vừa hộp như phụ đề phụ, 5 chữ mỗi lần (phụ đề phụ giữ nguyên)")
         self.main_box.setChecked(main_captions)
+        self.bg_box = QCheckBox("Phụ đề phụ: hộp che lấy màu nền ngay quanh hộp thay cho hộp đen (phụ đề chính giữ hộp đen)")
+        self.bg_box.setChecked(bg_color)
         self.path = QLineEdit(default_path)
         browse = QPushButton("Chọn…"); browse.clicked.connect(self._browse)
         row = QHBoxLayout(); row.addWidget(self.path, 1); row.addWidget(browse)
@@ -185,7 +187,7 @@ class ExportDialog(QDialog):
         buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Xuất")
         buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("Đóng")
         buttons.accepted.connect(self._check); buttons.rejected.connect(self.reject)
-        lay = QVBoxLayout(self); lay.addLayout(row); lay.addWidget(self.whole); lay.addLayout(seg); lay.addWidget(self.main_box); lay.addWidget(self.vertical_box); lay.addWidget(buttons)
+        lay = QVBoxLayout(self); lay.addLayout(row); lay.addWidget(self.whole); lay.addLayout(seg); lay.addWidget(self.main_box); lay.addWidget(self.bg_box); lay.addWidget(self.vertical_box); lay.addWidget(buttons)
         self.setMinimumWidth(520)
 
     def _browse(self) -> None:
@@ -209,6 +211,9 @@ class ExportDialog(QDialog):
 
     def main_captions(self) -> bool:
         return self.main_box.isChecked()
+
+    def bg_color(self) -> bool:
+        return self.bg_box.isChecked()
 
     def segment(self) -> tuple[float | None, float | None]:
         return (self.a.value(), self.b.value()) if self.part.isChecked() else (None, None)
