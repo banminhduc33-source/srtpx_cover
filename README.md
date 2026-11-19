@@ -71,6 +71,7 @@ Bình thường chữ **không tự xuống dòng** (giữ đúng các dòng có
 Khi xuất, hộp che của **phụ đề phụ** (mọi phụ đề không thuộc nhóm phụ đề chính, kể cả chữ nghiêng có đa giác) không còn đen mà lấy **màu nền ngay quanh hộp**, để hộp hòa vào cảnh thay vì để lại mảng đen. Phụ đề chính vẫn dùng hộp đen.
 - Với mỗi phụ đề phụ, app lấy khung hình video ở **giữa khoảng hiển thị** của nó, lấy vành đai **4 điểm ảnh ngay ngoài hộp che** (đã tính lề an toàn; bên trong hộp là chữ gốc nên không dùng) rồi lấy **trung vị** từng kênh R, G, B làm màu hộp.
 - Mỗi phụ đề chỉ một màu phẳng: nền chuyển sắc hoặc có hoa văn vẫn che bằng màu trung vị.
+- **Chữ tự đổi màu cho dễ đọc:** hộp tối thì chữ trắng như cũ; nền sáng (vd trắng) thì chữ chuyển **đen**, để chữ không chìm vào hộp. Chọn màu có độ tương phản (WCAG) cao hơn với màu hộp (`contrast_text_color` trong `core/bgcolor.py`). Preview vẫn vẽ hộp đen chữ trắng.
 - Không lấy được màu (lỗi ffmpeg, hộp nằm ngoài khung hình) thì phụ đề đó giữ hộp đen và có cảnh báo. Không có nhóm phụ đề chính thì mọi hộp vẫn đen.
 - Hộp thoại **Xuất**: tích/bỏ "Phụ đề phụ: hộp che lấy màu nền…" (mặc định bật). Dòng lệnh: mặc định bật, `--no-bg-color` để tắt. Màn hình xem trước trong app vẫn vẽ hộp đen.
 

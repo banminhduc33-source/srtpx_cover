@@ -10,10 +10,10 @@ from PIL import Image
 
 from srtpx_cover.core.animlayer import AnimLayer
 from srtpx_cover.core.bgcolor import hex_color, ring_color, sample_rect, sample_secondary_colors, secondary_indices
-from srtpx_cover.core.export import ExportOptions, build_filter_script
+from srtpx_cover.core.export import ExportOptions, build_filter_script, write_textfiles
 from srtpx_cover.core.ffmpeg_tools import VideoInfo
 from srtpx_cover.core.geometry import compute_scale
-from srtpx_cover.core.model import Box, SrtpxDocument, Subtitle
+from srtpx_cover.core.model import Box, Keyframe, SrtpxDocument, Subtitle
 
 FFMPEG, FFPROBE = shutil.which("ffmpeg"), shutil.which("ffprobe")
 need_ffmpeg = pytest.mark.skipif(not (FFMPEG and FFPROBE), reason="cần ffmpeg/ffprobe")
@@ -86,3 +86,39 @@ def test_animlayer_paints_box_with_given_color(tmp_path):
     lay.render()
     px = Image.open(tmp_path / "a" / "f00000.png").convert("RGBA")
     assert px.getpixel((10, 10)) == (*BG, 255) and px.getpixel((0, 0))[3] == 0
+
+
+def test_contrast_text_color_black_on_light_white_on_dark():
+    from srtpx_cover.core.bgcolor import contrast_text_color
+    assert contrast_text_color(None) == (255, 255, 255) and contrast_text_color((0, 0, 0)) == (255, 255, 255)
+    assert contrast_text_color((255, 255, 255)) == (0, 0, 0)       # nền trắng: chữ trắng sẽ chìm -> chữ đen
+    assert contrast_text_color((235, 225, 200)) == (0, 0, 0)       # nền kem sáng
+    assert contrast_text_color((0x33, 0x66, 0x99)) == (255, 255, 255)   # nền xanh đậm vẫn chữ trắng
+    assert contrast_text_color((128, 128, 128)) == (0, 0, 0)       # xám trung bình: đen tương phản hơn (5,3 so với 3,9)
+
+
+def test_text_is_black_on_white_box_and_white_on_dark_box(tmp_path):
+    """Hộp che lấy màu nền trắng thì chữ phải đen (không chìm), cả drawtext lẫn lớp PNG; hộp tối vẫn chữ trắng."""
+    from tests.helpers import fake_chain
+
+    chain = list(fake_chain(tmp_path))
+    info = VideoInfo(640, 480, 30, 1, 3.0)
+    doc = SrtpxDocument(res=(640, 480), subtitles=[
+        Subtitle(1, 1.0, 2.0, "Hello", Box(100, 300, 100, 160)),
+        Subtitle(2, 1.0, 2.0, "Hello", Box(100, 300, 300, 360)),
+    ])
+    white = build_filter_script(doc, info, chain, ExportOptions(margin=0.0, box_colors={1: (255, 255, 255)}), tmp_path / "w")
+    dt = [l for l in white.text.splitlines() if l.startswith("drawtext")]
+    assert any("fontcolor=0x000000" in l and "sub0001_" in l for l in dt)      # phụ đề 1 (nền trắng): chữ đen
+    assert any("fontcolor=0xffffff" in l and "sub0002_" in l for l in dt)      # phụ đề 2 (hộp đen): chữ trắng
+
+    # lớp PNG (có keyframe): chữ đen trên hộp trắng
+    kf = Subtitle(3, 1.0, 2.0, "Hello", None, [Keyframe(1.0, Box(100, 300, 100, 160)), Keyframe(2.0, Box(120, 320, 100, 170))])
+    script = build_filter_script(SrtpxDocument((640, 480), [kf]), info, chain,
+                                 ExportOptions(margin=0.0, box_colors={3: (255, 255, 255)}), tmp_path / "w2")
+    write_textfiles(script)
+    lay = script.layers[0]
+    a = Image.open(lay.directory / "f00000.png").convert("RGBA")
+    px = [a.getpixel((x, y)) for x in range(a.width) for y in range(a.height)]
+    assert any(p[3] == 255 and p[:3] == (255, 255, 255) for p in px)           # hộp trắng
+    assert any(p[3] > 200 and p[:3] == (0, 0, 0) for p in px)                  # chữ đen đè lên
