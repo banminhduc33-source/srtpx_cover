@@ -36,6 +36,8 @@ class AnimLayer:
     # Đa giác che (4 góc, điểm ảnh video thực, số thực) cho chữ nghiêng: có thì hộp đen vẽ theo đa giác thay cho hình chữ nhật
     # của geometry (geometry vẫn quyết định chỗ đặt chữ). Không có chữ thì `lines` rỗng và không cần font.
     polygon: tuple[tuple[float, float], ...] | None = None
+    # Đa giác theo từng khung (chữ nghiêng/xoay + chuyển động, đa giác nội suy theo keyframe): ưu tiên hơn `polygon` nếu có.
+    polygon_fn: Callable[[int], tuple[tuple[float, float], ...] | None] | None = field(repr=False, default=None)
 
     @property
     def pattern(self) -> str:
@@ -74,16 +76,18 @@ class AnimLayer:
         cache: dict[tuple, bytes] = {}
         for k in range(self.k0, self.k1 + 1):
             x1, x2, y1, y2, size = geoms[k]
-            key = tuple(round(v, 3) for v in (x1, x2, y1, y2, size))
+            poly = self.polygon_fn(k) if self.polygon_fn is not None else self.polygon
+            key = tuple(round(v, 3) for v in (x1, x2, y1, y2, size)) + (
+                tuple(round(c, 3) for p in poly for c in p) if poly is not None else ())
             path = self.directory / f"f{k - self.k0:05d}.png"
             if key in cache:
                 path.write_bytes(cache[key])
                 continue
             # hộp: vẽ ở SS lần rồi thu nhỏ -> mép hộp có độ phủ phân số, di chuyển liên tục
             boxbig = Image.new("RGBA", (self.cw * SS, self.ch * SS), (0, 0, 0, 0))
-            if self.polygon is not None:
+            if poly is not None:
                 ImageDraw.Draw(boxbig).polygon(
-                    [((px - self.ox) * SS, (py - self.oy) * SS) for px, py in self.polygon], fill=(0, 0, 0, 255),
+                    [((px - self.ox) * SS, (py - self.oy) * SS) for px, py in poly], fill=(0, 0, 0, 255),
                 )
             else:
                 ImageDraw.Draw(boxbig).rectangle(

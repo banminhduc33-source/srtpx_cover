@@ -6,6 +6,8 @@ Quy ước đã chọn (ghi trong tóm tắt Mốc 1):
 - Có KF thì bỏ qua dòng Độ rộng/Vị trí (mô hình chỉ giữ keyframe).
 - Mép x1>x2 hoặc y1>y2 được tự đổi chỗ kèm cảnh báo; giờ kết thúc <= giờ bắt đầu
   chỉ cảnh báo (vẫn giữ block để người dùng sửa).
+- Đa giác theo keyframe: dòng "KP <giây>s: x0,y0 x1,y1 x2,y2 x3,y3" đi kèm dòng KF cùng giờ (chữ nghiêng/xoay + chuyển động); hộp đen vẽ
+  theo đa giác nội suy giữa các keyframe, KF vẫn là hộp thẳng đặt chữ. Keyframe không có KP dùng 4 góc của hộp thẳng.
 - Dòng tuỳ chọn "Đa giác: x0,y0 x1,y1 x2,y2 x3,y3" (4 góc thật của chữ nghiêng, dấu thập phân là '.'): hộp đen vẽ theo
   đa giác; Độ rộng/Vị trí vẫn là hộp thẳng để đặt chữ trắng. Chỉ có tác dụng với phụ đề hộp cố định (có KF thì bỏ qua).
 """
@@ -38,6 +40,7 @@ _WIDTH_RE = re.compile(r"^\s*Độ\s*rộng\s*[:：]", re.IGNORECASE)
 _POS_RE = re.compile(r"^\s*Vị\s*trí\s*[:：]", re.IGNORECASE)
 _POLY_RE = re.compile(r"^\s*Đa\s*giác\s*[:：]", re.IGNORECASE)
 _POLY_PAIR_RE = re.compile(rf"(-?\d+(?:\.\d+)?)\s*[,;]\s*(-?\d+(?:\.\d+)?)")
+_KP_RE = re.compile(r"^\s*KP\s*(\d+(?:[.,]\d+)?)\s*s?\s*[:：]?\s*(.*)$", re.IGNORECASE)
 _KF_RE = re.compile(r"^\s*KF\s*(\d+(?:[.,]\d+)?)\s*s?\s*[:：]?\s*(.*)$", re.IGNORECASE)
 _PAREN_RE = re.compile(r"\([^)]*\)|（[^）]*）")
 _PAIR_RE = re.compile(rf"^\s*({_NUM})\s*(?:px)?\s*[-–—~]\s*({_NUM})\s*(?:px)?\s*$", re.IGNORECASE)
@@ -224,12 +227,21 @@ def _parse_block(
 
     # Phần metadata sau nội dung.
     keyframes: dict[float, Keyframe] = {}
+    kp_lines: dict[float, tuple[tuple[float, float], ...]] = {}
     for i in range(content_end, region_end):
         line = norm[i]
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
         if i == width_idx or i == pos_idx or i == poly_idx:
+            continue
+        pm = _KP_RE.match(line)
+        if pm:
+            poly_kp = _parse_polygon(pm.group(2))
+            if poly_kp is None or _polygon_area(poly_kp) < 1.0:
+                warnings.append(ParseWarning(i + 1, f"Phụ đề {index}: dòng KP cần đúng 4 góc dạng x,y có diện tích; bỏ qua dòng này."))
+            else:
+                kp_lines[_to_float(pm.group(1))] = poly_kp
             continue
         km = _KF_RE.match(line)
         if km:
@@ -250,6 +262,11 @@ def _parse_block(
     if keyframes:
         if poly_idx is not None:
             warnings.append(ParseWarning(poly_idx + 1, f"Phụ đề {index}: có KF nên bỏ qua dòng Đa giác."))
+        for t, poly_kp in kp_lines.items():
+            if t in keyframes:
+                keyframes[t] = Keyframe(t, keyframes[t].box, poly_kp)
+            else:
+                warnings.append(ParseWarning(content_end + 1, f"Phụ đề {index}: dòng KP {t}s không có keyframe KF cùng giờ, bỏ qua."))
         kfs = [keyframes[t] for t in sorted(keyframes)]
         return Subtitle(index, start, end, text, None, kfs)
 
@@ -332,6 +349,8 @@ def write_srtpx(doc: SrtpxDocument) -> str:
                 f"KF {_fmt_seconds(kf.time)}s: "
                 f"{_fmt_num(kb.x1)} {_fmt_num(kb.x2)} {_fmt_num(kb.y1)} {_fmt_num(kb.y2)}"
             )
+            if kf.polygon is not None:
+                out.append(f"KP {_fmt_seconds(kf.time)}s: " + " ".join(f"{_fmt_num(x)},{_fmt_num(y)}" for x, y in kf.polygon))
         out.append("")
     return "\n".join(out)
 

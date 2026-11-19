@@ -31,6 +31,9 @@ class Keyframe:
 
     time: float
     box: Box
+    # Đa giác 4 góc ((x, y) theo toạ độ #res) tại keyframe này (chữ nghiêng/xoay + chuyển động): hộp đen vẽ theo đa giác nội suy
+    # giữa các keyframe, `box` vẫn là hộp thẳng đặt chữ trắng. None = keyframe này không có đa giác (dùng 4 góc của `box`).
+    polygon: tuple[tuple[float, float], ...] | None = None
 
 
 @dataclass

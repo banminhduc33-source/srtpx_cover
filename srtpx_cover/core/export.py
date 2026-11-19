@@ -25,6 +25,7 @@ from .geometry import (
     PixelBox,
     compute_scale,
     frame_time,
+    has_keyframe_polygon,
     pixel_box,
     polygon_bounds,
     video_box,
@@ -191,6 +192,40 @@ def build_filter_script(
                 lines=lines, k0=k0, k1=k1, ox=ox, oy=oy, cw=cw, ch=ch,
                 geometry=lambda k, vb=vb, size=size: (vb.x1, vb.x2, vb.y1, vb.y2, size),
                 polygon=tuple(poly),
+            )
+            emit_layer(lay, k0, k1, ox, oy)
+            continue
+
+        # --- phụ đề có keyframe VÀ đa giác theo keyframe (chữ nghiêng/xoay + chuyển động): hộp đen vẽ theo đa giác nội suy từng khung
+        if sub.keyframes and has_keyframe_polygon(sub):
+            if has_text:
+                choice, plan = plan_text(sub, chain, scale.sy)
+                choices[sub.index] = choice
+                for kf in sub.keyframes:
+                    kb = video_box(sub, kf.time, scale, options.margin, video.size)
+                    if not plan.fits_at(kb.x2 - kb.x1, kb.y2 - kb.y1) and sub.index not in overflow:
+                        overflow.append(sub.index)
+                lines, font_path, face = plan.lines, str(choice.font.spec.path), choice.font.spec.face_index
+            else:
+                plan, lines, font_path, face = None, (), "", 0
+
+            def geom_p(k: int, sub=sub, plan=plan):
+                vb = video_box(sub, frame_time(k, num, den), scale, options.margin, video.size, options.smooth)
+                return (vb.x1, vb.x2, vb.y1, vb.y2, plan.size_for(vb.x2 - vb.x1, vb.y2 - vb.y1) if plan else 1.0)
+
+            def poly_p(k: int, sub=sub):
+                p = video_polygon(sub, scale, options.margin, video.size, frame_time(k, num, den), options.smooth)
+                return tuple(p) if p is not None else None
+
+            boxes_p = []
+            for k in range(k0, k1 + 1):
+                g, pl = geom_p(k), poly_p(k)
+                bx = polygon_bounds(pl) if pl else (g[0], g[1], g[2], g[3])
+                boxes_p.append((min(bx[0], g[0]), max(bx[1], g[1]), min(bx[2], g[2]), max(bx[3], g[3])))
+            ox, oy, cw, ch = canvas_for(boxes_p)
+            lay = AnimLayer(
+                directory=workdir / f"anim{sub.index:04d}", font_path=font_path, face_index=face,
+                lines=lines, k0=k0, k1=k1, ox=ox, oy=oy, cw=cw, ch=ch, geometry=geom_p, polygon_fn=poly_p,
             )
             emit_layer(lay, k0, k1, ox, oy)
             continue
