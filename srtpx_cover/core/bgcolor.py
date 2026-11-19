@@ -41,6 +41,23 @@ def hex_color(rgb: RGB) -> str:
     return "0x%02x%02x%02x" % rgb
 
 
+def _linear(c: int) -> float:
+    v = c / 255
+    return v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4
+
+
+def contrast_text_color(box: RGB | None) -> RGB:
+    """Màu chữ tương phản với màu hộp che: hộp đen (hoặc tối) -> chữ trắng; hộp sáng (nền trắng...) -> chữ đen.
+
+    Chọn màu có tỉ lệ tương phản WCAG cao hơn; hòa thì chữ trắng. `None` (hộp đen mặc định) -> trắng."""
+    if box is None:
+        return (255, 255, 255)
+    r, g, b = box
+    lum = 0.2126 * _linear(r) + 0.7152 * _linear(g) + 0.0722 * _linear(b)
+    # tương phản với trắng = 1.05 / (lum + 0.05); với đen = (lum + 0.05) / 0.05  -> bằng nhau khi lum ~ 0.179
+    return (0, 0, 0) if lum > 0.179 else (255, 255, 255)
+
+
 def sample_rect(sub: Subtitle, t: float, scale, margin: float, size: tuple[int, int]) -> tuple[int, int, int, int] | None:
     """Hình chữ nhật (x1, y1, x2, y2, điểm ảnh video) mà hộp che phủ tại giờ t; None nếu rỗng (nằm ngoài khung hình).
 
