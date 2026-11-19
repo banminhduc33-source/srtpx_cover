@@ -5,11 +5,14 @@ nên hộp ở preview và ở video xuất luôn là một (dung sai 1px của 
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Sequence
 
 from .fonts import FontData, FontChoice, FontError, FontSpec, describe_font_warnings
-from .geometry import PixelBox, compute_scale, is_visible, pixel_box, smallest_pixel_size, video_box, video_polygon
+from .geometry import (
+    PixelBox, compute_scale, is_visible, pixel_box, polygon_frame, smallest_pixel_size, video_box, video_polygon,
+)
 from .layout import LINE_HEIGHT_FACTOR, TextPlan, plan_text
 from .model import SrtpxDocument
 
@@ -29,6 +32,7 @@ class PreviewItem:
     cy: float
     fits: bool
     polygon: tuple[tuple[float, float], ...] | None = None   # đa giác che (chữ gốc nghiêng), điểm ảnh video thực; None = dùng `box`
+    angle: float = 0.0          # radian, chiều kim đồng hồ: chữ xoay theo góc nghiêng của đa giác (0 = chữ thẳng)
 
     def contains(self, x: float, y: float) -> bool:
         """Điểm (toạ độ video) có nằm trong vùng che không (đa giác nếu có, không thì hộp)."""
@@ -42,8 +46,13 @@ class PreviewItem:
         return inside or (self.box.x1 <= x < self.box.x2 and self.box.y1 <= y < self.box.y2)
 
     def line_center_y(self, j: int) -> float:
-        """Toạ độ y tâm dòng thứ j (khớp công thức drawtext: lệch (j-(n-1)/2) * line_height)."""
+        """Toạ độ y tâm dòng thứ j (khớp công thức drawtext: lệch (j-(n-1)/2) * line_height). Chữ thẳng; chữ xoay xem `line_center`."""
         return self.cy + (j - (len(self.lines) - 1) / 2) * self.line_height
+
+    def line_center(self, j: int) -> tuple[float, float]:
+        """Tâm dòng thứ j (x, y): lệch (j-(n-1)/2) * line_height dọc theo trục đứng của chữ, đã xoay cùng `angle`."""
+        off = (j - (len(self.lines) - 1) / 2) * self.line_height
+        return self.cx - off * math.sin(self.angle), self.cy + off * math.cos(self.angle)
 
 
 class PreviewModel:
@@ -114,18 +123,21 @@ class PreviewModel:
             if box.w <= 0 or box.h <= 0:
                 continue  # bị kẹp hết ra ngoài khung hình (giống bộ xuất)
             vb = video_box(sub, t, self.scale, self.margin, self.video_size)
+            fr = polygon_frame(poly) if poly is not None else None   # hộp nghiêng: chữ xoay theo đa giác và co vừa đa giác
+            cx, cy = (fr.cx, fr.cy) if fr is not None else ((vb.x1 + vb.x2) / 2, (vb.y1 + vb.y2) / 2)
             plan = self._plans.get(row)
             if plan is None:
                 lines: tuple[str, ...] = ()
                 size, lh, font, fits = 0.0, 0.0, None, True
             else:
                 choice, tp = plan
-                bw, bh = vb.x2 - vb.x1, vb.y2 - vb.y1
+                bw, bh = (fr.w, fr.h) if fr is not None else (vb.x2 - vb.x1, vb.y2 - vb.y1)
                 size = tp.size_for(bw, bh)       # chữ dính hộp: cỡ chữ liên tục theo hộp tại giờ t
                 lines, lh, font, fits = tp.lines, LINE_HEIGHT_FACTOR * size, choice.font.spec, tp.fits_at(bw, bh)
             out.append(PreviewItem(
                 row, sub.index, box, lines, size, lh, font,
-                (vb.x1 + vb.x2) / 2, (vb.y1 + vb.y2) / 2, fits,
+                cx, cy, fits,
                 tuple(poly) if poly is not None else None,
+                fr.angle if fr is not None else 0.0,
             ))
         return out

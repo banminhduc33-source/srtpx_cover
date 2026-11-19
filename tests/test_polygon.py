@@ -156,3 +156,84 @@ def test_polygon_with_text_goes_through_layer_and_renders_black_polygon_plus_whi
     white = [(x, y) for x in range(lay.ox, lay.ox + lay.cw) for y in range(lay.oy, lay.oy + lay.ch) if px(x, y)[:3] == (255, 255, 255) and px(x, y)[3] > 200]
     assert white, "không thấy chữ trắng"
     assert all(100 <= x <= 305 and 100 <= y <= 160 for x, y in white)      # chữ nằm trong hộp thẳng
+
+
+def _white_pixels(lay):
+    """Toạ độ (x, y) video của các điểm chữ trắng trong khung đầu của lớp `lay` (đã render)."""
+    from PIL import Image
+    a = np.asarray(Image.open(lay.directory / "f00000.png").convert("RGBA")).astype(int)
+    ys, xs = np.nonzero((a[..., 0] > 200) & (a[..., 1] > 200) & (a[..., 2] > 200) & (a[..., 3] > 200))
+    return xs + lay.ox, ys + lay.oy
+
+
+def _principal_angle_deg(xs, ys):
+    """Góc (độ, y hướng xuống) của trục dài nhất của đám điểm."""
+    c = np.cov(np.stack([xs - xs.mean(), ys - ys.mean()]))
+    w, v = np.linalg.eigh(c)
+    vx, vy = v[:, np.argmax(w)]
+    ang = np.degrees(np.arctan2(vy, vx))
+    return ang - 180 if ang > 90 else ang + 180 if ang <= -90 else ang
+
+
+def test_text_in_tilted_box_is_rotated_to_match_and_stays_inside_polygon(tmp_path):
+    """Hộp nghiêng -> chữ trắng nghiêng cùng góc (~-11,3 độ), nằm gọn trong đa giác, không phải chữ thẳng trong hộp bao."""
+    import math
+
+    from srtpx_cover.core.export import ExportOptions, build_filter_script, write_textfiles
+    from srtpx_cover.core.ffmpeg_tools import VideoInfo
+    from srtpx_cover.core.geometry import polygon_frame
+    from tests.helpers import fake_chain
+
+    chain = list(fake_chain(tmp_path))
+    video = VideoInfo(640, 480, 30, 1, 3.0)
+    doc = SrtpxDocument(res=(640, 480), subtitles=[Subtitle(1, 1.0, 2.0, "Hello world", Box(100, 305, 100, 160), polygon=POLY)])
+    script = build_filter_script(doc, video, chain, ExportOptions(), tmp_path / "work")
+    write_textfiles(script)
+    lay = script.layers[0]
+    xs, ys = _white_pixels(lay)
+    assert len(xs) > 50
+    want = math.degrees(polygon_frame(POLY).angle)
+    assert want == pytest.approx(-11.31, abs=0.05)
+    assert _principal_angle_deg(xs, ys) == pytest.approx(want, abs=1.5)        # chữ nghiêng đúng góc hộp
+    # mọi điểm chữ nằm trong đa giác (nới 2px cho khử răng cưa)
+    from srtpx_cover.core.geometry import expand_polygon
+    poly = expand_polygon(list(POLY), 2.0)
+    def inside(x, y):
+        sign = None
+        for (x0, y0), (x1, y1) in zip(poly, poly[1:] + poly[:1]):
+            cr = (x1 - x0) * (y - y0) - (y1 - y0) * (x - x0)
+            if cr != 0:
+                sign = sign if sign is not None else cr > 0
+                if (cr > 0) != sign:
+                    return False
+        return True
+    assert all(inside(x, y) for x, y in zip(xs.tolist(), ys.tolist()))
+
+
+
+
+def test_preview_text_follows_polygon_angle_and_size(tmp_path):
+    """Preview: hộp nghiêng thì chữ xoay cùng góc, tâm ở tâm đa giác và cỡ chữ co theo đa giác (không theo hộp bao)."""
+    import math
+
+    from srtpx_cover.core.geometry import polygon_frame
+    from srtpx_cover.core.preview import PreviewModel
+    from tests.helpers import fake_chain
+
+    chain = list(fake_chain(tmp_path))
+    doc = SrtpxDocument(res=(640, 480), subtitles=[
+        Subtitle(1, 1.0, 2.0, "Hello", Box(100, 305, 100, 160), polygon=POLY),
+        Subtitle(2, 1.0, 2.0, "Hello", Box(400, 500, 300, 340)),
+    ])
+    items = PreviewModel(doc, (640, 480), chain, 0.0).items_at(1.5)
+    tilted, plain = items
+    fr = polygon_frame(POLY)
+    assert tilted.angle == pytest.approx(fr.angle) and plain.angle == 0.0
+    assert (tilted.cx, tilted.cy) == pytest.approx((fr.cx, fr.cy))
+    assert tilted.font_size < 21                                    # cao đa giác ~20,6px; hộp bao cao 60px sẽ cho chữ to hơn nhiều
+    # dòng duy nhất nằm đúng tâm; hai dòng lệch đối xứng dọc trục chữ (đã xoay)
+    assert tilted.line_center(0) == pytest.approx((tilted.cx, tilted.cy))
+    two = tilted.__class__(**{**tilted.__dict__, "lines": ("a", "b"), "line_height": 10.0})
+    (x0, y0), (x1, y1) = two.line_center(0), two.line_center(1)
+    assert math.hypot(x1 - x0, y1 - y0) == pytest.approx(10.0)
+    assert math.atan2(y1 - y0, x1 - x0) == pytest.approx(fr.angle + math.pi / 2)

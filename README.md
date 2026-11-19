@@ -89,7 +89,8 @@ Vị trí: 100px - 160px
 Đa giác: 100,140 300,100 305,120 105,160
 ```
 - 4 góc thật của dòng chữ, dạng `x,y` cách nhau khoảng trắng, theo toạ độ `#res`, dấu thập phân là `.`.
-- **Hộp đen vẽ theo đa giác** (nới 1px như hộp thường, mép khử răng cưa), còn `Độ rộng`/`Vị trí` vẫn là hộp thẳng để **đặt chữ trắng** (và là hộp dự phòng cho bản cũ không hiểu dòng này).
+- **Hộp đen vẽ theo đa giác** (nới 1px như hộp thường, mép khử răng cưa), còn `Độ rộng`/`Vị trí` vẫn là hộp thẳng (hộp dự phòng cho bản cũ không hiểu dòng này).
+- **Chữ trắng nghiêng theo hộp:** chữ xoay cùng góc nghiêng của đa giác (góc lấy từ hai cạnh ngang, đã đưa về trong ±90° nên không bị lộn ngược), đặt ở tâm đa giác và **co vừa chính đa giác** (rộng = trung bình cạnh trên/dưới, cao = trung bình cạnh trái/phải) chứ không theo hộp bao thẳng, vốn rộng hơn nhiều khi nghiêng nên chữ sẽ tràn ra ngoài hộp. Nhiều dòng thì xếp dọc theo trục đã xoay. Đa giác có keyframe (`KP`) thì chữ xoay và co theo đa giác nội suy ở từng khung. Preview trong app cũng xoay chữ như vậy. Nghiêng dưới ~0,06° coi như thẳng.
 - Preview vẽ và chọn theo đa giác; kéo/đổi cỡ hộp thì đa giác dời/co giãn theo. Dùng keyframe cho phụ đề thì đa giác bị bỏ (file có cả KF và `Đa giác` thì bỏ qua dòng `Đa giác` kèm cảnh báo).
 - Phụ đề có đa giác **không** vào nhóm "phụ đề chính" (không chuẩn hóa hộp), giữ nguyên như phụ đề phụ.
 - Dòng sai (không đủ 4 góc, diện tích 0) bị bỏ kèm cảnh báo, phụ đề vẫn dùng hộp thẳng.

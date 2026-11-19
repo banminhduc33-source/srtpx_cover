@@ -12,11 +12,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFont
 
 from .fonts import LINE_HEIGHT_FACTOR
+from .geometry import polygon_frame
 
 SS = 8  # hệ số siêu mẫu
+MIN_TILT = 0.001  # rad (~0,06 độ): nghiêng ít hơn thì coi như thẳng, giữ đường vẽ chữ thẳng cũ
 
 
 @dataclass
@@ -66,6 +68,54 @@ class AnimLayer:
             out.append((m, w / 2, h / 2))
         return out
 
+    def _upright_mask(self, masks, pad: int, big: int, x1: float, x2: float, y1: float, y2: float, size: float) -> Image.Image:
+        """Mặt nạ chữ thẳng, căn giữa hộp thẳng (x1, x2, y1, y2)."""
+        n = len(self.lines)
+        amask = Image.new("L", (self.cw, self.ch), 0)
+        f = size / big
+        cx = (x1 + x2) / 2 - self.ox
+        for j, (m, mcx, mcy) in enumerate(masks):
+            if m is None:
+                continue
+            cy = (y1 + y2) / 2 - self.oy + (j - (n - 1) / 2) * LINE_HEIGHT_FACTOR * size
+            # vùng đích chỉ bao phần chữ (bỏ phần đệm của mặt nạ) + 2px; phần đệm đảm bảo box nguồn luôn nằm trong ảnh
+            hw, hh = (m.width / 2 - pad) * f, (m.height / 2 - pad) * f
+            px0, px1 = math.floor(cx - hw) - 2, math.ceil(cx + hw) + 2
+            py0, py1 = math.floor(cy - hh) - 2, math.ceil(cy + hh) + 2
+            src = ((px0 - cx) / f + mcx, (py0 - cy) / f + mcy, (px1 - cx) / f + mcx, (py1 - cy) / f + mcy)
+            src = (max(0.0, src[0]), max(0.0, src[1]), min(float(m.width), src[2]), min(float(m.height), src[3]))
+            patch = m.resize((px1 - px0, py1 - py0), Image.Resampling.LANCZOS, box=src)
+            cur = Image.new("L", (self.cw, self.ch), 0)
+            cur.paste(patch, (px0, py0))
+            amask = ImageChops.lighter(amask, cur)
+        return amask
+
+    def _tilted_mask(self, masks, pad: int, big: int, size: float, frame) -> Image.Image:
+        """Mặt nạ chữ XOAY theo góc của đa giác, tâm ở tâm đa giác.
+
+        Mỗi dòng vẽ ở SS lần cỡ cuối rồi xoay (BICUBIC) quanh tâm dòng, ghép vào canvas SS lần và thu nhỏ BOX về điểm ảnh thật:
+        mép chữ vẫn mượt dưới 1px như chữ thẳng. Các dòng xếp dọc theo trục xoay (lệch (j-(n-1)/2) x cao dòng rồi quay cùng góc)."""
+        n = len(self.lines)
+        sin, cos = math.sin(frame.angle), math.cos(frame.angle)
+        deg = math.degrees(frame.angle)
+        big_canvas = Image.new("L", (self.cw * SS, self.ch * SS), 0)
+        f = size * SS / big                       # mặt nạ lớn -> cỡ SS lần cỡ cuối
+        for j, (m, _mcx, _mcy) in enumerate(masks):
+            if m is None:
+                continue
+            c = max(0, pad - 4)                       # bỏ phần đệm lớn của mặt nạ (chỉ cần cho chữ thẳng), chừa 4px; tâm giữ nguyên
+            m = m.crop((c, c, m.width - c, m.height - c))
+            w, h = max(1, round(m.width * f)), max(1, round(m.height * f))
+            part = m.resize((w, h), Image.Resampling.LANCZOS) if (w, h) != m.size else m
+            part = part.rotate(-deg, resample=Image.Resampling.BICUBIC, expand=True)   # PIL xoay NGƯỢC chiều kim đồng hồ
+            off = (j - (n - 1) / 2) * LINE_HEIGHT_FACTOR * size
+            lx = frame.cx - self.ox - off * sin       # tâm dòng sau khi quay vector (0, off) đi `angle`
+            ly = frame.cy - self.oy + off * cos
+            pos = (round(lx * SS - part.width / 2), round(ly * SS - part.height / 2))
+            box = (pos[0], pos[1], pos[0] + part.width, pos[1] + part.height)
+            big_canvas.paste(ImageChops.lighter(big_canvas.crop(box), part), pos)
+        return big_canvas.resize((self.cw, self.ch), Image.Resampling.BOX)
+
     def render(self) -> None:
         self.directory.mkdir(parents=True, exist_ok=True)
         n = len(self.lines)
@@ -98,24 +148,11 @@ class AnimLayer:
                 )
             layer = boxbig.resize((self.cw, self.ch), Image.Resampling.BOX)
             # chữ: mỗi dòng co về cỡ `size` quanh tâm dòng (số thực), đặt vào lưới điểm ảnh nguyên bằng resize(box=...)
-            amask = Image.new("L", (self.cw, self.ch), 0)
-            f = size / big
-            cx = (x1 + x2) / 2 - self.ox
-            for j, (m, mcx, mcy) in enumerate(masks):
-                if m is None:
-                    continue
-                cy = (y1 + y2) / 2 - self.oy + (j - (n - 1) / 2) * LINE_HEIGHT_FACTOR * size
-                # vùng đích chỉ bao phần chữ (bỏ phần đệm của mặt nạ) + 2px; phần đệm đảm bảo box nguồn luôn nằm trong ảnh
-                hw, hh = (m.width / 2 - pad) * f, (m.height / 2 - pad) * f
-                px0, px1 = math.floor(cx - hw) - 2, math.ceil(cx + hw) + 2
-                py0, py1 = math.floor(cy - hh) - 2, math.ceil(cy + hh) + 2
-                src = ((px0 - cx) / f + mcx, (py0 - cy) / f + mcy, (px1 - cx) / f + mcx, (py1 - cy) / f + mcy)
-                src = (max(0.0, src[0]), max(0.0, src[1]), min(float(m.width), src[2]), min(float(m.height), src[3]))
-                patch = m.resize((px1 - px0, py1 - py0), Image.Resampling.LANCZOS, box=src)
-                from PIL import ImageChops
-                cur = Image.new("L", (self.cw, self.ch), 0)
-                cur.paste(patch, (px0, py0))
-                amask = ImageChops.lighter(amask, cur)
+            frame = polygon_frame(poly) if poly is not None else None
+            if frame is not None and abs(frame.angle) > MIN_TILT:
+                amask = self._tilted_mask(masks, pad, big, size, frame)   # hộp nghiêng: chữ xoay theo cùng góc
+            else:
+                amask = self._upright_mask(masks, pad, big, x1, x2, y1, y2, size)
             white = Image.new("RGBA", (self.cw, self.ch), (255, 255, 255, 0))
             white.putalpha(amask)
             small = Image.alpha_composite(layer, white)

@@ -88,3 +88,38 @@ def test_export_follows_interpolated_polygon_not_bounding_box():
     assert b[190, 210] < 30 and b[240, 590] < 30
     assert b[145, 590] > 100 and b[295, 210] > 100
     assert a[150, 110] < 30 and b[150, 110] > 100  # góc trái-trên cũ không còn bị che ở KF 1
+
+
+def test_text_in_keyframe_polygon_rotates_with_interpolated_polygon(tmp_path):
+    """Đa giác keyframe nghiêng thì chữ trắng xoay theo đúng góc đa giác tại khung đó (không còn chữ thẳng)."""
+    import math
+
+    from PIL import Image
+
+    from srtpx_cover.core.export import ExportOptions, build_filter_script, write_textfiles
+    from srtpx_cover.core.ffmpeg_tools import VideoInfo
+    from srtpx_cover.core.geometry import polygon_frame
+    from tests.helpers import fake_chain
+
+    chain = list(fake_chain(tmp_path))
+    video = VideoInfo(640, 360, 30, 1, 3.0)
+    flat = ((100.0, 100.0), (500.0, 100.0), (500.0, 160.0), (100.0, 160.0))          # KF 0: thẳng
+    tilt = ((100.0, 160.0), (500.0, 80.0), (500.0, 140.0), (100.0, 220.0))           # KF 1: nghiêng ~ -11,3 độ
+    sub = Subtitle(1, 0.0, 2.0, "Hello", None, [Keyframe(0.0, Box(100, 500, 100, 160), flat),
+                                                Keyframe(1.0, Box(100, 500, 80, 220), tilt)])
+    script = build_filter_script(SrtpxDocument((640, 360), [sub]), video, chain, ExportOptions(smooth=False), tmp_path / "w")
+    write_textfiles(script)
+    lay = script.layers[0]
+
+    def angle_at(frame: int) -> float:
+        a = np.asarray(Image.open(lay.directory / f"f{frame:05d}.png").convert("RGBA")).astype(int)
+        ys, xs = np.nonzero((a[..., 0] > 200) & (a[..., 1] > 200) & (a[..., 2] > 200) & (a[..., 3] > 200))
+        assert len(xs) > 30
+        w, v = np.linalg.eigh(np.cov(np.stack([xs - xs.mean(), ys - ys.mean()])))
+        vx, vy = v[:, np.argmax(w)]
+        ang = math.degrees(math.atan2(vy, vx))
+        return ang - 180 if ang > 90 else ang + 180 if ang <= -90 else ang
+
+    want = math.degrees(polygon_frame(tilt).angle)
+    assert abs(angle_at(0)) < 1.5                          # khung đầu: đa giác thẳng -> chữ thẳng
+    assert angle_at(30) == pytest.approx(want, abs=1.5)    # khung 30 = KF 1: chữ nghiêng như đa giác
