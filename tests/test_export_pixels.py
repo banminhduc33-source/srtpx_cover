@@ -65,7 +65,7 @@ def _export(size: tuple[int, int], text: bool) -> tuple[Path, Path]:
     chain = _need_tools()
     src = _source(*size)
     out = Path(tempfile.mkdtemp(prefix="srtpx_out_")) / "out.mp4"
-    argv = [str(src), str(SAMPLE), str(out), "--crf", "0", "--preset", "ultrafast", "--no-vertical"]
+    argv = [str(src), str(SAMPLE), str(out), "--crf", "0", "--preset", "ultrafast", "--no-vertical", "--no-bg-color"]   # test kiểm tra hộp ĐEN
     for spec in chain:
         argv += ["--font", f"{spec.path}#{spec.face_index}"]
     if not text:

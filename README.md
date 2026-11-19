@@ -67,6 +67,13 @@ Bình thường chữ **không tự xuống dòng** (giữ đúng các dòng có
 - Chỉ áp dụng khi **xuất** (cùng bước "Phụ đề chính", cần tìm được nhóm chính), preview vẫn hiện như cũ. Tắt bằng `MainCaptionOptions(wrap_secondary=False)` hoặc `--no-wrap-secondary` ở dòng lệnh. Không ghi vào file `.srtpx`.
 - Nửa còn lại của lỗi "chữ nhảy chỗ thì KF trượt chậm" nằm ở bộ bóc `hardsub-extract-tool` (tách block mới khi chữ phụ nhảy chỗ, xem README bên đó) vì chỉ nơi đó mới có dữ liệu từng khung hình.
 
+## Phụ đề phụ lấy màu nền làm màu hộp
+Khi xuất, hộp che của **phụ đề phụ** (mọi phụ đề không thuộc nhóm phụ đề chính, kể cả chữ nghiêng có đa giác) không còn đen mà lấy **màu nền ngay quanh hộp**, để hộp hòa vào cảnh thay vì để lại mảng đen. Phụ đề chính vẫn dùng hộp đen.
+- Với mỗi phụ đề phụ, app lấy khung hình video ở **giữa khoảng hiển thị** của nó, lấy vành đai **4 điểm ảnh ngay ngoài hộp che** (đã tính lề an toàn; bên trong hộp là chữ gốc nên không dùng) rồi lấy **trung vị** từng kênh R, G, B làm màu hộp.
+- Mỗi phụ đề chỉ một màu phẳng: nền chuyển sắc hoặc có hoa văn vẫn che bằng màu trung vị.
+- Không lấy được màu (lỗi ffmpeg, hộp nằm ngoài khung hình) thì phụ đề đó giữ hộp đen và có cảnh báo. Không có nhóm phụ đề chính thì mọi hộp vẫn đen.
+- Hộp thoại **Xuất**: tích/bỏ "Phụ đề phụ: hộp che lấy màu nền…" (mặc định bật). Dòng lệnh: mặc định bật, `--no-bg-color` để tắt. Màn hình xem trước trong app vẫn vẽ hộp đen.
+
 ## Khung 9:16 + logo (tự động sau khi xuất)
 Xuất xong, app dựng tiếp video dọc **1080x1920** từ video vừa xuất (bỏ tích ở hộp thoại Xuất, hoặc `--no-vertical` ở dòng lệnh để tắt):
 - **Nền:** bản sao video phóng to phủ kín khung 9:16, làm mờ, hạ độ sáng còn **35%**.

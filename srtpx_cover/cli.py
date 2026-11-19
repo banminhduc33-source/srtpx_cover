@@ -7,6 +7,7 @@ Ví dụ:
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import os
 import shutil
 import sys
@@ -17,6 +18,7 @@ from .core.export import ExportOptions, build_command, build_filter_script, writ
 from .core.ffmpeg_tools import FfmpegError, ffmpeg_major_version, find_tool, probe_video, run_ffmpeg
 from .core.vertical import (VerticalOptions, build_vertical_command, build_vertical_filter, find_logo, logo_size,
                             plan_vertical)
+from .core.bgcolor import sample_secondary_colors, secondary_indices
 from .core.dub import DEFAULT_MAX_SPEED, DubOptions, prepare_dub_audio
 from .core.tts import DEFAULT_VOICE, TtsError, tiktok_synthesizer
 from .core.fonts import FontError, FontSpec, default_font_chain, load_chain, parse_font_path
@@ -66,6 +68,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help=f"Tối đa số chữ mỗi cụm phụ đề chính, mặc định {DEFAULT_WORDS}")
     p.add_argument("--no-wrap-secondary", action="store_true",
                    help="Phụ đề phụ có hộp cao hơn rộng KHÔNG tự xuống dòng (mặc định: tự xuống dòng để chữ to hơn)")
+    p.add_argument("--no-bg-color", action="store_true",
+                   help="Phụ đề phụ dùng hộp đen (mặc định: hộp che phụ đề phụ lấy màu nền ngay quanh hộp, chỉ phụ đề chính giữ hộp đen)")
     p.add_argument("--no-vertical", action="store_true",
                    help="Không dựng khung 9:16 (mặc định: sau khi xuất, dựng thêm nền mờ + logo thành video dọc 1080x1920)")
     p.add_argument("--dump-filter", metavar="FILE", help="Ghi filter script ra file này để kiểm tra rồi thoát")
@@ -136,6 +140,14 @@ def _run(args: argparse.Namespace) -> int:
             print(rep.summary())
 
         doc = parsed.document
+        if not args.no_bg_color:
+            # Tính trên phụ đề gốc, TRƯỚC khi chuẩn hóa phụ đề chính (phụ đề phụ giữ nguyên chỉ số sau bước đó).
+            colors, bg_warnings = sample_secondary_colors(doc, args.video, video, opts.margin, ffmpeg)
+            for w in bg_warnings:
+                print(f"[màu nền] {w}", file=sys.stderr)
+            if colors:
+                opts = dataclasses.replace(opts, box_colors=colors)
+                print(f"[màu nền] {len(colors)}/{len(secondary_indices(doc) or ())} phụ đề phụ dùng màu nền thay hộp đen.")
         if not args.no_main_captions and opts.draw_text:
             mc_opts = MainCaptionOptions(words_per_chunk=args.main_words, wrap_secondary=not args.no_wrap_secondary)
             doc, mc = apply_main_captions(doc, mc_opts, spoken, chain)
