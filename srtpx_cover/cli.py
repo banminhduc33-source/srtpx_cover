@@ -19,7 +19,7 @@ from .core.ffmpeg_tools import FfmpegError, ffmpeg_major_version, find_tool, pro
 from .core.vertical import (VerticalOptions, build_vertical_command, build_vertical_filter, find_logo, logo_size,
                             plan_vertical)
 from .core.bgcolor import sample_secondary_colors, secondary_indices
-from .core.dub import DEFAULT_MAX_SPEED, DubOptions, prepare_dub_audio
+from .core.dub import DEFAULT_MAX_SPEED, DubOptions, build_swap_audio_command, prepare_dub_audio
 from .core.tts import DEFAULT_VOICE, TtsError, tiktok_synthesizer
 from .core.fonts import FontError, FontSpec, default_font_chain, load_chain, parse_font_path
 from .core.geometry import DEFAULT_MARGIN_PX
@@ -70,10 +70,20 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Phụ đề phụ có hộp cao hơn rộng KHÔNG tự xuống dòng (mặc định: tự xuống dòng để chữ to hơn)")
     p.add_argument("--no-bg-color", action="store_true",
                    help="Phụ đề phụ dùng hộp đen (mặc định: hộp che phụ đề phụ lấy màu nền ngay quanh hộp, chỉ phụ đề chính giữ hộp đen)")
+    p.add_argument("--both", action="store_true",
+                   help="Với --dub: xuất HAI video, <tên>_tts (có giọng đọc) và <tên>_notts (giữ âm thanh gốc, không TTS). "
+                        "Hình dựng một lần, bản TTS chỉ ghép lại âm thanh nên gần như không tốn thêm thời gian. "
+                        "Không có giọng đọc nào để ghép thì chỉ xuất một video như thường")
     p.add_argument("--no-vertical", action="store_true",
                    help="Không dựng khung 9:16 (mặc định: sau khi xuất, dựng thêm nền mờ + logo thành video dọc 1080x1920)")
     p.add_argument("--dump-filter", metavar="FILE", help="Ghi filter script ra file này để kiểm tra rồi thoát")
     return p
+
+
+def with_suffix(path: str | Path, suffix: str) -> str:
+    """Thêm hậu tố trước phần đuôi file: ra.mp4 + "_tts" -> ra_tts.mp4."""
+    p = Path(path)
+    return str(p.with_name(p.stem + suffix + p.suffix))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -116,6 +126,7 @@ def _run(args: argparse.Namespace) -> int:
                          crf=args.crf, preset=args.preset, threads=args.threads,
                          codec=args.codec, start=args.start, end=args.end)
     workdir = Path(tempfile.mkdtemp(prefix="srtpx_"))
+    outputs = [args.output]   # các file sẽ ghi, để xoá file dở khi lỗi (chỉ file mình tạo, không đụng file khác trùng tên)
     try:
         # Lồng tiếng chạy TRƯỚC trên phụ đề gốc (đọc nguyên câu): cần biết giọng đọc dài bao lâu thì mới chia được mốc
         # chuyển cụm cho phụ đề chính. --dump-filter không tạo giọng nên bỏ qua bước này.
@@ -165,11 +176,20 @@ def _run(args: argparse.Namespace) -> int:
             return 0
         extra = script.extra_inputs(video.fps_num, video.fps_den)
         audio_map = None
+        # --both: video dựng MỘT lần với âm thanh gốc (bản không TTS); bản có TTS ghép giọng đọc vào sau (không dựng lại hình).
+        tts_audio = None
+        out_plain, out_tts = args.output, None
+        if args.both and args.dub and mixed is not None:
+            tts_audio, mixed = mixed, None
+            out_plain, out_tts = with_suffix(args.output, "_notts"), with_suffix(args.output, "_tts")
+            outputs = [out_plain, out_tts]
+        elif args.both:
+            print("[cảnh báo] --both cần --dub và có câu để lồng tiếng; xuất một video như thường.", file=sys.stderr)
         if mixed is not None:
             audio_map = f"{1 + len(script.layers)}:a"
             extra = [*extra, "-i", str(mixed)]
         vertical = not args.no_vertical
-        stage1 = str(workdir / "che.mp4") if vertical else args.output
+        stage1 = str(workdir / "che.mp4") if vertical else out_plain
         cmd = build_command(ffmpeg, args.video, script_path, stage1, opts, ffmpeg_major_version(ffmpeg), script.complex, extra,
                             audio_map)
         last = [-1]
@@ -184,12 +204,18 @@ def _run(args: argparse.Namespace) -> int:
         if vertical:
             print("\nĐang dựng khung 9:16…")
             last[0] = -1
-            run_ffmpeg(vertical_command(ffmpeg, stage1, args.output, workdir, opts, probe_video(stage1, ffprobe)),
+            run_ffmpeg(vertical_command(ffmpeg, stage1, out_plain, workdir, opts, probe_video(stage1, ffprobe)),
                        opts.segment_seconds(video.duration), show)
-        print(f"\nXong: {args.output}")
+        print(f"\nXong: {out_plain}")
+        if out_tts is not None:
+            print("Đang ghép giọng đọc cho bản có TTS…")
+            run_ffmpeg(build_swap_audio_command(ffmpeg, out_plain, tts_audio, out_tts, opts.start),
+                       opts.segment_seconds(video.duration), lambda p: None)
+            print(f"Xong: {out_tts}")
         return 0
     except FfmpegError:
-        Path(args.output).unlink(missing_ok=True)  # xoá file dở
+        for f in outputs:
+            Path(f).unlink(missing_ok=True)  # xoá file dở
         raise
     finally:
         shutil.rmtree(workdir, ignore_errors=True)

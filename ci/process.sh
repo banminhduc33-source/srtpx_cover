@@ -21,7 +21,8 @@ FONT_ARGS=()
 # (App tự đọc sessionid từ biến môi trường TIKTOK_SESSIONID, không truyền qua dòng lệnh để khỏi lộ.)
 DUB_ARGS=()
 if [ -n "${TIKTOK_SESSIONID:-}" ]; then
-  DUB_ARGS+=(--dub --voice BV074_streaming --orig-volume 0.3 --voice-volume 1.0)
+  # --both: mỗi video ra HAI file, ${base}_out_tts.mp4 (có giọng đọc) và ${base}_out_notts.mp4 (âm thanh gốc, không TTS).
+  DUB_ARGS+=(--dub --both --voice BV074_streaming --orig-volume 0.3 --voice-volume 1.0)
 else
   echo "::notice::Chưa có secret TIKTOK_SESSIONID — xuất không lồng tiếng."
 fi
@@ -50,17 +51,24 @@ for f in "${FILES[@]}"; do
      && rclone copyto "$REMOTE/processing/$f" "$job/in.srtpx"; then
     # shellcheck disable=SC2086
     if python -m srtpx_cover.cli "$job/in_video" "$job/in.srtpx" "$out" \
-         "${FONT_ARGS[@]}" "${DUB_ARGS[@]}" --threads 0 $EXPORT_ARGS 2>&1 | tr '\r' '\n' | tee "$log" \
-       && [ -s "$out" ]; then success=1; fi
+         "${FONT_ARGS[@]}" "${DUB_ARGS[@]}" --threads 0 $EXPORT_ARGS 2>&1 | tr '\r' '\n' | tee "$log"; then success=1; fi
   else
     echo "Không tải được file từ Drive" | tee "$log"
   fi
   # pipefail: tee luôn trả 0 nên kiểm lại bằng file đầu ra + dòng "Xong"
   grep -q '^Xong:' "$log" 2>/dev/null || success=0
+  # Đầu ra: một video (${base}_out.mp4), hoặc hai video _tts / _notts khi có lồng tiếng. Lấy những file thật sự có.
+  outs=()
+  for cand in "$out" "${out%.mp4}_tts.mp4" "${out%.mp4}_notts.mp4"; do
+    [ -s "$cand" ] && outs+=("$cand")
+  done
+  [ "${#outs[@]}" -gt 0 ] || success=0
   echo "::endgroup::"
 
   if [ "$success" = 1 ]; then
-    rclone copyto "$out" "$REMOTE/out/${base}_out.mp4" \
+    sent=1
+    for o in "${outs[@]}"; do rclone copyto "$o" "$REMOTE/out/$(basename "$o")" || sent=0; done
+    [ "$sent" = 1 ] \
       && rclone moveto "$REMOTE/processing/$video" "$REMOTE/done/$video" \
       && rclone moveto "$REMOTE/processing/$f" "$REMOTE/done/$f" \
       && { echo "OK: $base"; ok=$((ok+1)); } || { echo "::error::Gửi kết quả về Drive lỗi: $base"; bad=$((bad+1)); }

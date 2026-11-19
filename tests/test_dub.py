@@ -275,3 +275,72 @@ def test_end_to_end_cli_export_has_dubbed_audio(tmp_path, monkeypatch):
     def active(x, y): return sum(1 for v in a[int(x * 8000):int(y * 8000)] if abs(v) > 300)
     assert active(0.3, 0.8) == 0 and active(12, 14) == 0   # #1 (0.27s) và #5 là phụ đề phụ nên không đọc
     assert active(9.5, 10.9) > 0
+
+
+def _make_silent_video(path):
+    subprocess.run([FFMPEG, "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=gray:s=768x576:r=25:d=14",
+                    "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", "-t", "14", "-c:v", "libx264",
+                    "-pix_fmt", "yuv420p", "-c:a", "aac", str(path)], check=True)
+
+
+def _audio_pcm(path):
+    pcm = subprocess.run([FFMPEG, "-v", "error", "-i", str(path), "-vn", "-ac", "1", "-ar", "8000", "-f", "s16le", "-"],
+                         capture_output=True, check=True).stdout
+    a = array("h"); a.frombytes(pcm)
+    return a
+
+
+def _probe(path, entries):
+    return subprocess.run([FFPROBE, "-v", "error", "-show_entries", entries, "-of", "csv=p=0", str(path)],
+                          capture_output=True, text=True, check=True).stdout
+
+
+@need_ffmpeg
+def test_cli_both_writes_tts_and_notts_videos(tmp_path, monkeypatch):
+    """--both: ra hai video cùng hình, `_notts` giữ âm thanh gốc (im), `_tts` có giọng đọc đúng chỗ; không có file `ra.mp4`."""
+    from srtpx_cover import cli
+
+    video = tmp_path / "in.mp4"
+    _make_silent_video(video)
+    monkeypatch.setattr(cli, "tiktok_synthesizer", lambda sid: (lambda text, voice: fake_mp3(0.3 + 0.05 * len(text) / 4)))
+    out = tmp_path / "ra.mp4"
+    sample = tmp_path / "sample.srtpx"
+    sample.write_bytes(b"\r\n".join(l for l in DATA.read_bytes().splitlines() if not l.startswith(b"#res")))
+    args = [str(video), str(sample), str(out), "--dub", "--both", "--sessionid", "x", "--tts-cache", str(tmp_path / "cache"),
+            "--orig-volume", "0", "--no-text", "--no-vertical"]
+    assert cli.main(args) == 0
+    tts, notts = tmp_path / "ra_tts.mp4", tmp_path / "ra_notts.mp4"
+    assert tts.exists() and notts.exists() and not out.exists()
+    for f in (tts, notts):
+        info = _probe(f, "stream=codec_type")
+        assert "video" in info and "audio" in info
+    # cùng hình: hình chỉ dựng một lần, bản TTS copy hình nên cùng độ dài
+    dv = lambda f: float(_probe(f, "format=duration").strip())
+    assert dv(tts) == pytest.approx(dv(notts), abs=0.2)
+    act = lambda a, x, y: sum(1 for v in a[int(x * 8000):int(y * 8000)] if abs(v) > 300)
+    a_tts, a_no = _audio_pcm(tts), _audio_pcm(notts)
+    assert act(a_tts, 9.5, 10.9) > 0          # bản TTS: có giọng đọc quanh 10s (như test lồng tiếng)
+    assert act(a_no, 0, 14) == 0              # bản không TTS: vẫn là âm thanh gốc (im lặng), không lẫn giọng
+
+
+@need_ffmpeg
+def test_cli_both_without_dub_falls_back_to_single_output(tmp_path, capsys):
+    from srtpx_cover import cli
+
+    video = tmp_path / "in.mp4"
+    _make_silent_video(video)
+    out = tmp_path / "ra.mp4"
+    sample = tmp_path / "sample.srtpx"
+    sample.write_bytes(b"\r\n".join(l for l in DATA.read_bytes().splitlines() if not l.startswith(b"#res")))
+    assert cli.main([str(video), str(sample), str(out), "--both", "--no-text", "--no-vertical"]) == 0
+    assert out.exists() and not (tmp_path / "ra_tts.mp4").exists() and not (tmp_path / "ra_notts.mp4").exists()
+    assert "--both" in capsys.readouterr().err
+
+
+def test_swap_audio_command_copies_video_and_cuts_audio_from_start():
+    from srtpx_cover.core.dub import build_swap_audio_command
+
+    cmd = build_swap_audio_command("ffmpeg", "v.mp4", "a.m4a", "o.mp4", start=12.5)
+    assert cmd[cmd.index("-c:v") + 1] == "copy"                                  # không dựng lại hình
+    assert cmd[cmd.index("-ss") + 1] == "12.500" and cmd.index("-ss") < cmd.index("a.m4a")   # -ss thuộc đầu vào âm thanh
+    assert "-ss" not in build_swap_audio_command("ffmpeg", "v.mp4", "a.m4a", "o.mp4")

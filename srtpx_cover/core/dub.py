@@ -332,6 +332,19 @@ def build_mix_command(
             "-c:a", "aac", "-b:a", "192k", str(out_audio)]
 
 
+def build_swap_audio_command(
+    ffmpeg: str, video: str | Path, audio: str | Path, output: str | Path, start: float | None = None,
+) -> list[str]:
+    """Lệnh ghép `audio` (file .m4a đã trộn, tính từ đầu video GỐC) vào `video` đã dựng, KHÔNG dựng lại hình (-c:v copy).
+
+    Dùng để ra bản "có TTS" từ video đã xuất xong (bản "không TTS"): chỉ tốn vài giây thay vì dựng lại hộp/chữ.
+    `start` là giây bắt đầu khi xuất theo đoạn (--start): video đã dựng bắt đầu từ 0 nên cắt âm thanh từ mốc đó; `-shortest`
+    cắt phần âm thanh dư ở cuối."""
+    seek = ["-ss", f"{start:.3f}"] if start else []
+    return [ffmpeg, "-y", "-i", str(video), *seek, "-i", str(audio),
+            "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "copy", "-shortest", str(output)]
+
+
 # ---------------------------------------------------------------- một bước từ đầu tới cuối
 
 def prepare_dub_audio(
