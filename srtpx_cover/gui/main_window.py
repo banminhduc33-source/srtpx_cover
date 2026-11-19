@@ -38,7 +38,7 @@ from PySide6.QtWidgets import (
 from ..core.bgcolor import sample_secondary_colors
 from ..core.dub import NO_MAIN_WARNING, drop_overlaps, keep_main_subtitles, prepare_dub_audio, split_dub_subtitles
 from ..core.tts import TtsError, ensure_clips, tiktok_synthesizer
-from ..core.export import DEFAULT_PAD_FRAMES, ExportOptions, build_command, build_filter_script, write_textfiles
+from ..core.export import ExportOptions, build_command, build_filter_script, write_textfiles
 from ..core.maincap import MainCaptionOptions, apply_main_captions
 from ..core.ffmpeg_tools import (
     FfmpegError, VideoInfo, build_proxy_command, ffmpeg_major_version, find_tool, probe_video,
@@ -764,7 +764,7 @@ class MainWindow(QMainWindow):
             margin=self._setting_float("export/margin", DEFAULT_MARGIN_PX),
             crf=int(self._setting_float("export/crf", 18)), preset=str(s.value("export/preset", "veryfast")),
             threads=int(self._setting_float("export/threads", 2)), codec=str(s.value("export/codec", "libx264")),
-            start=a, end=b, pad_frames=DEFAULT_PAD_FRAMES,
+            start=a, end=b,
         )
         workdir = Path(tempfile.mkdtemp(prefix="srtpx_"))
         try:

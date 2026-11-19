@@ -14,7 +14,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from .core.export import DEFAULT_PAD_FRAMES, ExportOptions, build_command, build_filter_script, write_textfiles
+from .core.export import ExportOptions, build_command, build_filter_script, write_textfiles
 from .core.ffmpeg_tools import FfmpegError, ffmpeg_major_version, find_tool, probe_video, run_ffmpeg
 from .core.vertical import (VerticalOptions, build_vertical_command, build_vertical_filter, find_logo, logo_size,
                             plan_vertical)
@@ -43,8 +43,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("srtpx", help="File .srtpx")
     p.add_argument("output", help="Video đầu ra")
     p.add_argument("--margin", type=float, default=DEFAULT_MARGIN_PX, help="Lề an toàn (px, tối đa 1), mặc định 1")
-    p.add_argument("--pad-frames", type=int, default=DEFAULT_PAD_FRAMES,
-                   help="Nới hộp che ra N khung ở mỗi đầu để chữ gốc không lộ ở đầu/cuối câu (mặc định 3, 0 = tắt)")
     p.add_argument("--font", action="append", default=[], metavar="FILE[#n]",
                    help="Font trong chuỗi ưu tiên (lặp lại nhiều lần). Mặc định: Bevan -> Arial -> YaHei")
     p.add_argument("--fonts-dir", default=str(APP_DIR / "fonts"), help="Thư mục fonts/ chứa Bevan-Regular.ttf")
@@ -126,8 +124,7 @@ def _run(args: argparse.Namespace) -> int:
 
     opts = ExportOptions(margin=args.margin, draw_text=not args.no_text,
                          crf=args.crf, preset=args.preset, threads=args.threads,
-                         codec=args.codec, start=args.start, end=args.end,
-                         pad_frames=max(0, args.pad_frames))
+                         codec=args.codec, start=args.start, end=args.end)
     workdir = Path(tempfile.mkdtemp(prefix="srtpx_"))
     outputs = [args.output]   # các file sẽ ghi, để xoá file dở khi lỗi (chỉ file mình tạo, không đụng file khác trùng tên)
     try:
