@@ -39,9 +39,16 @@ from .layout import LINE_HEIGHT_FACTOR, plan_text
 from .model import SrtpxDocument, Subtitle
 
 
+DEFAULT_PAD_FRAMES = 3   # số khung nới hộp che ở mỗi đầu khi xuất từ CLI / giao diện
+
+
 @dataclass(frozen=True)
 class ExportOptions:
     margin: float = 1.0
+    # Nới hộp che ra N khung ở MỖI đầu (chữ mới vẫn hiện đúng giờ cũ): hardsub gốc thường hiện sớm / tắt muộn hơn
+    # mốc OCR vài khung, không nới thì chữ gốc lộ ra ở đầu và cuối câu. 0 = tắt (mặc định của thư viện);
+    # CLI và giao diện dùng DEFAULT_PAD_FRAMES.
+    pad_frames: int = 0
     smooth: bool = True             # nội suy mượt (PCHIP) giữa các keyframe; False = tuyến tính như trước
     draw_text: bool = True
     crf: int = 18
@@ -172,6 +179,22 @@ def build_filter_script(
             too_short.append(sub.index)
             continue
         k0, k1 = rng
+
+        # --- nới hộp che trước k0 và sau k1 (chỉ hộp, không chữ) để che nốt chữ gốc còn sót ở đầu/cuối câu
+        if options.pad_frames > 0:
+            pad_color = ("0x%02x%02x%02x" % (options.box_colors or {})[sub.index]) if sub.index in (options.box_colors or {}) else "black"
+            lead = (max(0, k0 - options.pad_frames), k0 - 1)
+            tail = (k1 + 1, k1 + options.pad_frames)
+            for (a_, z), kt in ((lead, k0), (tail, k1)):
+                if z < a_:
+                    continue
+                pb = pixel_box(sub, frame_time(kt, num, den), scale, options.margin, video.size)
+                if pb.w <= 0 or pb.h <= 0:
+                    continue
+                parts.append(
+                    f"drawbox=x={pb.x1}:y={pb.y1}:w={pb.w}:h={pb.h}:color={pad_color}:t=fill:"
+                    + _enable((a_ - 0.5) * den / num, (z + 0.5) * den / num)
+                )
 
         has_text = options.draw_text and bool(sub.text.strip())
         box_rgb = (options.box_colors or {}).get(sub.index)

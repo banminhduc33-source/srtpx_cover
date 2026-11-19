@@ -288,3 +288,21 @@ def test_font_chain_overrides_missing_file_warns(tmp_path):
     from srtpx_cover.core.fonts import font_chain_from_settings
     chain, warnings = font_chain_from_settings(tmp_path, ["", "", str(tmp_path / "khong_co.ttf")])
     assert any("font CJK" in w for w in warnings)
+
+
+
+def test_pad_frames_extends_box_both_ends_but_not_text_window():
+    """pad_frames nới hộp che ra hai đầu (che nốt hardsub gốc hiện sớm/tắt muộn), chữ giữ đúng giờ cũ."""
+    doc = SrtpxDocument((768, 576), [Subtitle(index=1, start=1.0, end=2.0, text="Xin chao", box=Box(100, 400, 200, 260))])
+    base, padded = build(doc, draw_text=False), build(doc, draw_text=False, pad_frames=3)
+    b0, b3 = boxes_of(base.text), boxes_of(padded.text)
+    assert len(b0) == 1 and len(b3) == 3
+    main = b0[0]
+    lead = next(b for b in b3 if b[5] <= main[4] + 1e-6)   # hộp đầu kết thúc đúng lúc hộp chính bắt đầu
+    tail = next(b for b in b3 if b[4] >= main[5] - 1e-6)   # hộp đuôi bắt đầu đúng lúc hộp chính kết thúc
+    assert lead[:4] == tail[:4] == main[:4]
+    assert main[4] - lead[4] == pytest.approx(3 / 30) and tail[5] - main[5] == pytest.approx(3 / 30)
+    # chữ: cửa sổ enable của drawtext không đổi
+    t0 = re.findall(r"drawtext=.*?enable='[^']*'", build(doc, pad_frames=0).text)
+    t3 = re.findall(r"drawtext=.*?enable='[^']*'", build(doc, pad_frames=3).text)
+    assert t0 == t3 and t0
