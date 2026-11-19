@@ -11,8 +11,9 @@ from srtpx_cover.core.export import ExportOptions, build_filter_script
 from srtpx_cover.core.ffmpeg_tools import VideoInfo
 from srtpx_cover.core.layout import plan_text
 from srtpx_cover.core.maincap import (
-    MainCaptionOptions, apply_main_captions, chunk_times, find_main_group, split_chunks, word_weights,
+    MainCaptionOptions, apply_main_captions, chunk_times, find_main_group, split_chunks, split_chunks_to_fit, word_weights,
 )
+from srtpx_cover.core.fonts import text_width
 from srtpx_cover.core.model import Box, Keyframe, SrtpxDocument, Subtitle
 from tests.helpers import fake_chain
 
@@ -108,6 +109,84 @@ def test_split_literal_five_per_chunk():
 def test_split_handles_newlines_and_blank():
     assert split_chunks("một\nhai   ba") == [["một", "hai", "ba"]]
     assert split_chunks("   \n ") == []
+
+
+# ------------------------------------------------------------------ chia cụm theo sức chứa hộp
+
+FONT = CHAIN[0]
+H = 36.0                                   # cao hộp -> cỡ chữ lớn nhất 30, co tối đa tới 75% = 22,5
+WORDS12 = " ".join(["aaaa"] * 12)          # mỗi chữ 2,496em, khoảng trắng 0,52em (font giả 0,6em/ký tự, nhân 1,04)
+
+
+def max_em(box_w, box_h=H, ratio=0.75):
+    return box_w / (box_h / 1.2 * ratio)
+
+
+def test_wider_box_holds_more_words_per_chunk():
+    narrow = split_chunks_to_fit(WORDS12, FONT, 225, H)
+    wide = split_chunks_to_fit(WORDS12, FONT, 450, H)
+    assert max(map(len, narrow)) == 3 and max(map(len, wide)) == 6
+    assert [len(c) for c in wide] == [6, 6] and len(narrow) == 4
+    for chunks in (narrow, wide):
+        assert [w for c in chunks for w in c] == WORDS12.split()
+
+
+def test_every_chunk_fits_the_box_at_the_smallest_allowed_size():
+    for w in (80, 140, 225, 337, 450, 900):
+        for ratio in (0.5, 0.75, 1.0):
+            limit = max_em(w, ratio=ratio)
+            for c in split_chunks_to_fit(WORDS12, FONT, w, H, ratio):
+                assert len(c) == 1 or text_width(FONT, " ".join(c), 1.0) <= limit + 1e-9
+
+
+def test_lower_min_size_means_fewer_chunks():
+    counts = [len(split_chunks_to_fit(WORDS12, FONT, 225, H, r)) for r in (1.0, 0.75, 0.5, 0.25)]
+    assert counts == sorted(counts, reverse=True) and counts[0] > counts[-1]
+
+
+def test_fit_chunks_are_balanced_unless_balance_is_off():
+    box_w = 12 * (H / 1.2 * 0.75)                                   # vừa đủ 4 chữ một dòng, 5 chữ thì tràn
+    nine = " ".join(["aaaa"] * 9)
+    assert [len(c) for c in split_chunks_to_fit(nine, FONT, box_w, H)] == [3, 3, 3]
+    assert [len(c) for c in split_chunks_to_fit(nine, FONT, box_w, H, balance=False)] == [4, 4, 1]
+
+
+def test_max_words_caps_chunks_even_when_the_box_could_hold_more():
+    chunks = split_chunks_to_fit(WORDS12, FONT, 900, H, max_words=4)
+    assert max(map(len, chunks)) <= 4 and [len(c) for c in chunks] == [4, 4, 4]
+
+
+def test_word_wider_than_the_box_is_never_cut_and_stands_alone():
+    chunks = split_chunks_to_fit("aa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb cc", FONT, 60, H)
+    assert [w for c in chunks for w in c] == ["aa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "cc"]
+    assert ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"] in chunks
+
+
+def test_fit_handles_blank_degenerate_box_and_short_text():
+    assert split_chunks_to_fit("  \n ", FONT, 300, H) == []
+    assert split_chunks_to_fit("một hai", FONT, 600, H) == [["một", "hai"]]
+    assert [len(c) for c in split_chunks_to_fit("1 2 3 4 5 6 7", FONT, 0, H)] == [4, 3]   # hộp hỏng: lùi về số chữ cố định
+
+
+def test_apply_with_fonts_sizes_chunks_by_each_subtitles_own_box_width():
+    wide = mk(1, 0.0, 3.0, WORDS12, 100, 700, 500, 535)             # cùng tâm ngang 400, khác độ rộng
+    narrow = mk(2, 3.0, 6.0, WORDS12, 370, 430, 500, 535)
+    third = mk(3, 6.0, 7.0, "aaaa aaaa", 100, 700, 500, 535)
+    new, info = apply_main_captions(doc_of(wide, narrow, third), chain=CHAIN)
+    assert info.applied and info.by_box and "sức chứa hộp" in info.message()
+    n_wide = sum(1 for s in new.subtitles if s.box.width > 300 and s.text.startswith("aaaa") and s.start < 3.0)
+    n_narrow = sum(1 for s in new.subtitles if s.box.width < 100)
+    assert n_wide < n_narrow                                         # hộp rộng chia ít cụm hơn hộp hẹp
+    assert all(len(s.text.split()) == 1 for s in new.subtitles if s.box.width < 100)
+    assert info.max_chunk_words == max(len(s.text.split()) for s in new.subtitles)
+    assert [w for s in new.subtitles if s.start < 3.0 for w in s.text.split()] == WORDS12.split()
+
+
+def test_apply_without_fonts_falls_back_to_fixed_word_count():
+    new, info = apply_main_captions(three_main())
+    assert info.applied and not info.by_box and info.max_chunk_words == 5 and "tối đa 5 chữ" in info.message()
+    capped, info2 = apply_main_captions(three_main(), MainCaptionOptions(words_per_chunk=3))
+    assert info2.max_chunk_words <= 3 and all(len(s.text.split()) <= 3 for s in capped.subtitles)
 
 
 def test_weights_add_pause_at_punctuation_but_not_at_the_end():
