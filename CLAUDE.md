@@ -40,6 +40,7 @@
 
 ## 7. Merge
 - Merge theo thứ tự nếu PR xếp chồng (PR dưới trước); GitHub tự đổi base về `main`.
+- **Sau khi merge, xác nhận thay đổi đã vào `main`:** `git fetch origin main` rồi tìm một tên hàm/dòng đặc trưng của thay đổi (`git grep <ten> origin/main`). Nếu PR trên (#N) đã merge xong **trước** khi PR chồng (#M) được merge, thì #M chỉ vào nhánh của #N chứ không vào `main` (đã xảy ra với #18). Khi đó mở PR mới từ nhánh của #M vào `main`. Báo người dùng "đã vào `main`" chỉ khi đã kiểm tra như trên.
 - Xung đột khi merge: giữ cả hai bên nếu hai tính năng độc lập (đã gặp ở README và `cli.py`), chạy lại test sau khi gỡ marker, đẩy lại và chờ GitHub báo `mergeable: true`.
 
 ## 8. Báo kết quả
