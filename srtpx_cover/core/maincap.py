@@ -7,8 +7,10 @@ Phim thường có MỘT chỗ đặt phụ đề (cùng vị trí, chỉ lệch
 2. Hộp đen của mỗi phụ đề chính: chiều NGANG (x1, x2) lấy của chính nó trong file .srtpx (chữ gốc tiếng Trung) rồi nhân 1,025 quanh tâm,
    chiều DỌC (y1, y2) lấy trung bình của cả nhóm phụ đề chính để mọi câu nằm cùng một hàng, cùng cao. Chữ chia thành
    nhiều cụm nhưng các cụm của một câu dùng chung hộp đó; hộp không bị chia và không bị nới theo chữ.
-3. Cỡ chữ tính như phụ đề phụ (co vừa hộp, không đặt cỡ riêng), mỗi lần hiện tối đa 5 chữ: câu dài được chia thành nhiều cụm
-   nối tiếp nhau trong hộp đó.
+3. Cỡ chữ tính như phụ đề phụ (co vừa hộp, không đặt cỡ riêng). Số chữ mỗi cụm KHÔNG cố định mà theo SỨC CHỨA của hộp đen
+   của chính câu đó: hộp rộng chứa được nhiều chữ hơn hộp hẹp. Với mỗi câu, app cho chữ co nhỏ dần từ cỡ lớn nhất theo chiều cao hộp
+   xuống tới `min_size_ratio` (mặc định 75%) rồi đo độ rộng thật của từng chữ để biết một cụm chứa được tối đa bao nhiêu chữ,
+   lấy đó chia câu thành ít cụm nhất, rồi chia đều theo độ rộng. Không có font thì dùng số chữ cố định (`DEFAULT_WORDS`).
 4. Mốc thời gian từng cụm chia theo THỜI LƯỢNG GIỌNG ĐỌC thực tế (`spoken` lấy từ `DubReport.spoken`) chứ không theo
    [start, end] của phụ đề, vì TTS đọc nguyên câu một mạch và có thể bị tua nhanh hoặc mượn khoảng im phía sau. TikTok TTS
    không trả mốc từng từ nên mốc tính theo tỷ lệ số âm tiết (mỗi chữ tiếng Việt ~ một âm tiết), cộng trọng số nghỉ ở dấu câu.
@@ -27,10 +29,11 @@ from dataclasses import dataclass, replace
 from typing import Sequence
 
 from .dub import drop_overlaps
-from .fonts import FontData
+from .fonts import LINE_HEIGHT_FACTOR, FontData, choose_font, fold_for_font, text_width
 from .model import Box, SrtpxDocument, Subtitle
 
-DEFAULT_WORDS = 5
+DEFAULT_WORDS = 5         # số chữ mỗi cụm khi KHÔNG đo được hộp (thiếu font) hoặc làm mức trần khi người dùng đặt
+DEFAULT_MIN_SIZE = 0.75   # cỡ chữ nhỏ nhất của một cụm, tính theo tỷ lệ so với cỡ lớn nhất vừa chiều cao hộp
 BOX_WIDTH_SCALE = 1.025   # chiều ngang hộp đen nhân thêm, giữ nguyên tâm ngang
 
 # Trọng số nghỉ (tính theo "số âm tiết") TTS thường chèn sau dấu câu.
@@ -40,8 +43,9 @@ _CLOSERS = "\"'”’)]}»›」』】》"
 
 @dataclass(frozen=True)
 class MainCaptionOptions:
-    words_per_chunk: int = DEFAULT_WORDS  # tối đa số chữ mỗi cụm
-    balance: bool = True                  # True: chia đều (11 chữ -> 4+4+3), tránh cụm lẻ 1 chữ; False: 5+5+1 đúng từng chữ
+    words_per_chunk: int | None = None    # None: tự tính theo sức chứa hộp đen từng câu; số: mức trần số chữ mỗi cụm (và là số chữ cố định khi thiếu font)
+    min_size_ratio: float = DEFAULT_MIN_SIZE  # cụm được co chữ xuống tối thiểu tỷ lệ này so với cỡ lớn nhất theo chiều cao hộp (0 < r <= 1)
+    balance: bool = True                  # True: chia đều theo độ rộng, tránh cụm lẻ 1 chữ; False: nhồi đầy từng cụm rồi mới sang cụm kế
     tol_x_ratio: float = 0.05             # dung sai tâm theo chiều ngang, tỷ lệ chiều rộng khung hình
     tol_y_ratio: float = 0.025            # dung sai tâm theo chiều dọc, tỷ lệ chiều cao khung hình
     min_group: int = 2                    # nhóm đông nhất ít hơn số này thì coi như không có phụ đề chính
@@ -57,7 +61,8 @@ class MainCaptionInfo:
     n_chunks: int = 0
     n_dropped_overlap: int = 0            # phụ đề chính trùng giờ: chỉ giữ hộp, bỏ chữ (cùng luật với lồng tiếng)
     box: Box | None = None
-    words_per_chunk: int = DEFAULT_WORDS
+    max_chunk_words: int = 0              # số chữ của cụm dài nhất thực tế
+    by_box: bool = False                  # True: số chữ mỗi cụm tính theo sức chứa hộp; False: số chữ cố định
 
     def message(self) -> str:
         if not self.applied or self.box is None:
@@ -65,7 +70,8 @@ class MainCaptionInfo:
         b = self.box
         s = (f"Phụ đề chính: {self.n_main}/{self.n_total} dòng cùng vị trí -> hộp đen: ngang theo từng phụ đề trong file, dọc trung bình ( {b.width:.0f}x{b.height:.0f} "
              f"tại ({(b.x1 + b.x2) / 2:.0f}, {(b.y1 + b.y2) / 2:.0f})), "
-             f"{self.n_chunks} cụm tối đa {self.words_per_chunk} chữ")
+             f"{self.n_chunks} cụm " + (f"theo sức chứa hộp, dài nhất {self.max_chunk_words} chữ" if self.by_box
+                                         else f"tối đa {self.max_chunk_words} chữ"))
         if self.n_dropped_overlap:
             s += f", {self.n_dropped_overlap} dòng trùng giờ chỉ giữ hộp"
         return s + "."
@@ -186,6 +192,88 @@ def split_chunks(text: str, per_chunk: int = DEFAULT_WORDS, balance: bool = True
     return out
 
 
+def _balanced_partition(widths: Sequence[float], space: float, k: int, max_words: int) -> list[tuple[int, int]]:
+    """Chia dãy chữ (độ rộng từng chữ ở cỡ 1px) thành ĐÚNG k đoạn liền nhau, mỗi đoạn tối đa `max_words` chữ, sao cho đoạn rộng
+    nhất hẹp nhất (hòa: các đoạn đều nhau hơn nên không có cụm lẻ 1 chữ). Trả về [(đầu, cuối)) theo chỉ số chữ.
+    Độ rộng một đoạn = tổng độ rộng chữ + khoảng trắng giữa các chữ (tuyến tính theo cỡ chữ nên cộng được)."""
+    n = len(widths)
+    pre = [0.0]
+    for w in widths:
+        pre.append(pre[-1] + w)
+
+    def width(i: int, j: int) -> float:
+        return pre[j] - pre[i] + (j - i - 1) * space
+
+    inf = (float("inf"), float("inf"))
+    dp = [[inf] * (n + 1) for _ in range(k + 1)]      # dp[kk][j] = (độ rộng lớn nhất, tổng bình phương) tốt nhất khi chia j chữ đầu thành kk đoạn
+    cut = [[0] * (n + 1) for _ in range(k + 1)]
+    dp[0][0] = (0.0, 0.0)
+    for kk in range(1, k + 1):
+        for j in range(kk, n + 1):
+            for i in range(max(kk - 1, j - max_words), j):
+                prev = dp[kk - 1][i]
+                if prev == inf:
+                    continue
+                w = width(i, j)
+                cand = (max(prev[0], w), prev[1] + w * w)
+                if cand < dp[kk][j]:
+                    dp[kk][j], cut[kk][j] = cand, i
+    bounds: list[tuple[int, int]] = []
+    j = n
+    for kk in range(k, 0, -1):
+        bounds.append((cut[kk][j], j))
+        j = cut[kk][j]
+    return bounds[::-1]
+
+
+def split_chunks_to_fit(
+    text: str,
+    font: FontData,
+    box_w: float,
+    box_h: float,
+    min_size_ratio: float = DEFAULT_MIN_SIZE,
+    max_words: int | None = None,
+    balance: bool = True,
+    measure_text: str | None = None,
+) -> list[list[str]]:
+    """Chia chữ thành các cụm theo SỨC CHỨA của hộp đen box_w x box_h (cùng đơn vị với cỡ chữ, vd toạ độ #res).
+
+    Mỗi cụm là một dòng. Cỡ chữ lớn nhất của dòng là box_h / 1,2 (vừa chiều cao hộp); cho chữ co xuống tối thiểu
+    `min_size_ratio` lần cỡ đó thì độ rộng dòng tối đa là box_w / (cỡ nhỏ nhất). Đo độ rộng thật từng chữ bằng `font` rồi nhồi chữ
+    vào cụm cho tới khi hết chỗ: số cụm ít nhất `k`. `balance` thì chia lại đều theo độ rộng thành đúng k cụm (cụm nào cũng không
+    rộng hơn mức nhồi đầy), nên cỡ chữ các cụm gần nhau. `max_words` là mức trần số chữ mỗi cụm nếu người dùng muốn.
+    Không cắt giữa một chữ: chữ rộng hơn hộp nằm riêng một cụm (cỡ chữ lúc vẽ sẽ co theo hộp).
+
+    `measure_text`: bản chữ đã đổi dấu câu cho khớp font (`fold_for_font`) để đo; phải cùng số chữ với `text`, không thì đo `text`."""
+    words = text.split()
+    if not words:
+        return []
+    n = len(words)
+    if box_w <= 0 or box_h <= 0:
+        return split_chunks(text, max_words or DEFAULT_WORDS, balance)
+    measured = (measure_text if measure_text is not None else text).split()
+    if len(measured) != n:
+        measured = words
+    ratio = min(1.0, max(0.05, min_size_ratio))
+    max_em = box_w / (box_h / LINE_HEIGHT_FACTOR * ratio)     # độ rộng dòng tối đa (em, ở cỡ chữ 1px) khi chữ ở cỡ nhỏ nhất cho phép
+    limit = max_words if max_words and max_words > 0 else n
+    ww = [text_width(font, w, 1.0) for w in measured]
+    space = text_width(font, " ", 1.0)
+
+    bounds: list[tuple[int, int]] = []
+    i = 0
+    while i < n:                                              # nhồi đầy từng cụm (tham lam cho số cụm ít nhất)
+        j, w = i + 1, ww[i]
+        while j < n and j - i < limit and w + space + ww[j] <= max_em + 1e-9:
+            w += space + ww[j]
+            j += 1
+        bounds.append((i, j))
+        i = j
+    if balance and len(bounds) > 1:
+        bounds = _balanced_partition(ww, space, len(bounds), limit)
+    return [words[a:b] for a, b in bounds]
+
+
 def word_weights(words: Sequence[str]) -> list[float]:
     """Trọng số thời gian đọc từng chữ: 1 âm tiết + phần nghỉ nếu chữ kết thúc bằng dấu câu.
     Chữ cuối cả câu không cộng nghỉ (khoảng lặng cuối file TTS không đáng kể, cộng vào sẽ làm mốc chuyển cụm bị lệch sớm)."""
@@ -238,7 +326,8 @@ def apply_main_captions(
     """Trả về (tài liệu mới, thông tin). Không tìm được nhóm chính thì trả lại chính `doc` và `applied=False`.
 
     `spoken`: {chỉ số phụ đề: số giây giọng đọc} (DubReport.spoken); thiếu thì chia theo [start, end] của phụ đề.
-    `chain`: giữ lại cho tương thích, không còn dùng (hộp lấy đúng từ file, không nới theo chữ).
+    `chain`: chuỗi font để đo độ rộng chữ. Có thì số chữ mỗi cụm tính theo sức chứa hộp đen từng câu (`split_chunks_to_fit`);
+    không có thì chia theo số chữ cố định (`options.words_per_chunk` hoặc `DEFAULT_WORDS`). Hộp luôn lấy đúng từ file, không nới theo chữ.
     """
     subs = doc.subtitles
     total = len(subs)
@@ -256,15 +345,6 @@ def apply_main_captions(
     kept_ids = {id(s) for s in kept}
     kept.sort(key=lambda s: (s.start, s.index))
 
-    plan: dict[int, list[tuple[float, float, str]]] = {}   # id(phụ đề) -> [(bắt đầu, kết thúc, chữ)]
-    for i, s in enumerate(kept):
-        nxt = kept[i + 1].start if i + 1 < len(kept) else None
-        speech_end, t_end = _span(s, nxt, (spoken or {}).get(s.index))
-        chunks = split_chunks(s.text, options.words_per_chunk, options.balance)
-        weights = [sum(ws) for ws in _per_chunk_weights(chunks)]
-        times = chunk_times(weights, s.start, speech_end, t_end)
-        plan[id(s)] = [(a, b, " ".join(c)) for (a, b), c in zip(times, chunks)]
-
     # Chiều dọc = trung bình cả nhóm; chiều ngang giữ riêng từng phụ đề theo file .srtpx (không nới theo chữ).
     fixed = _mean_box([_rest_box(s) for s in members])
 
@@ -272,6 +352,27 @@ def apply_main_captions(
         r = _rest_box(sub)
         cx, half = (r.x1 + r.x2) / 2, (r.x2 - r.x1) * BOX_WIDTH_SCALE / 2
         return Box(cx - half, cx + half, fixed.y1, fixed.y2)
+
+    by_box = bool(chain)
+
+    def chunks_for(sub: Subtitle) -> list[list[str]]:
+        """Chia chữ một phụ đề chính: theo sức chứa hộp đen của chính nó (có font), không thì số chữ cố định."""
+        if not by_box:
+            return split_chunks(sub.text, options.words_per_chunk or DEFAULT_WORDS, options.balance)
+        folded = fold_for_font(sub.text, chain)
+        font = choose_font(folded, chain).font          # cùng font mà lúc vẽ sẽ chọn cho câu này
+        b = own_box(sub)
+        return split_chunks_to_fit(sub.text, font, b.width, b.height, options.min_size_ratio,
+                                   options.words_per_chunk, options.balance, measure_text=folded)
+
+    plan: dict[int, list[tuple[float, float, str]]] = {}   # id(phụ đề) -> [(bắt đầu, kết thúc, chữ)]
+    for i, s in enumerate(kept):
+        nxt = kept[i + 1].start if i + 1 < len(kept) else None
+        speech_end, t_end = _span(s, nxt, (spoken or {}).get(s.index))
+        chunks = chunks_for(s)
+        weights = [sum(ws) for ws in _per_chunk_weights(chunks)]
+        times = chunk_times(weights, s.start, speech_end, t_end)
+        plan[id(s)] = [(a, b, " ".join(c)) for (a, b), c in zip(times, chunks)]
 
     next_index = max(s.index for s in subs) + 1
     out: list[Subtitle] = []
@@ -293,7 +394,8 @@ def apply_main_captions(
 
     info = MainCaptionInfo(
         True, n_main=len(group), n_total=total, n_chunks=n_chunks,
-        n_dropped_overlap=len(dropped), box=fixed, words_per_chunk=options.words_per_chunk,
+        n_dropped_overlap=len(dropped), box=fixed, by_box=by_box,
+        max_chunk_words=max((len(t.split()) for chunks in plan.values() for _, _, t in chunks), default=0),
     )
     return SrtpxDocument(res=doc.res, subtitles=out), info
 

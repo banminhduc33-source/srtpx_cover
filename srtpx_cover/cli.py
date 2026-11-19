@@ -23,7 +23,7 @@ from .core.dub import DEFAULT_MAX_SPEED, DubOptions, build_swap_audio_command, p
 from .core.tts import DEFAULT_VOICE, TtsError, tiktok_synthesizer
 from .core.fonts import FontError, FontSpec, default_font_chain, load_chain, parse_font_path
 from .core.geometry import DEFAULT_MARGIN_PX
-from .core.maincap import DEFAULT_WORDS, MainCaptionOptions, apply_main_captions
+from .core.maincap import DEFAULT_MIN_SIZE, DEFAULT_WORDS, MainCaptionOptions, apply_main_captions
 from .core.parser import SrtpxError, read_srtpx
 
 APP_DIR = Path(__file__).resolve().parent.parent
@@ -64,8 +64,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-main-captions", action="store_true",
                    help="Tắt chuẩn hóa phụ đề chính (mặc định: nhóm phụ đề cùng vị trí đông nhất dùng chung một hộp cố định, "
                         "chữ cỡ cố định, chia cụm vài chữ; phụ đề phụ giữ nguyên)")
-    p.add_argument("--main-words", type=int, default=DEFAULT_WORDS,
-                   help=f"Tối đa số chữ mỗi cụm phụ đề chính, mặc định {DEFAULT_WORDS}")
+    p.add_argument("--main-words", type=int, default=None,
+                   help="Mức trần số chữ mỗi cụm phụ đề chính. Mặc định: tự tính theo sức chứa hộp đen từng câu "
+                        f"(thiếu font thì {DEFAULT_WORDS} chữ)")
+    p.add_argument("--main-min-size", type=float, default=DEFAULT_MIN_SIZE,
+                   help="Cụm phụ đề chính được co chữ xuống tối thiểu tỷ lệ này so với cỡ lớn nhất theo chiều cao hộp "
+                        f"(0-1, mặc định {DEFAULT_MIN_SIZE}); nhỏ hơn thì mỗi cụm chứa nhiều chữ hơn")
     p.add_argument("--no-wrap-secondary", action="store_true",
                    help="Phụ đề phụ có hộp cao hơn rộng KHÔNG tự xuống dòng (mặc định: tự xuống dòng để chữ to hơn)")
     p.add_argument("--no-bg-color", action="store_true",
@@ -160,7 +164,8 @@ def _run(args: argparse.Namespace) -> int:
                 opts = dataclasses.replace(opts, box_colors=colors)
                 print(f"[màu nền] {len(colors)}/{len(secondary_indices(doc) or ())} phụ đề phụ dùng màu nền thay hộp đen.")
         if not args.no_main_captions and opts.draw_text:
-            mc_opts = MainCaptionOptions(words_per_chunk=args.main_words, wrap_secondary=not args.no_wrap_secondary)
+            mc_opts = MainCaptionOptions(words_per_chunk=args.main_words, min_size_ratio=args.main_min_size,
+                                         wrap_secondary=not args.no_wrap_secondary)
             doc, mc = apply_main_captions(doc, mc_opts, spoken, chain)
             print(f"[phụ đề chính] {mc.message()}")
 
