@@ -5,6 +5,8 @@ core/preview.py đặt thẳng vào scene, và view tự scale khi cửa sổ co
 """
 from __future__ import annotations
 
+import math
+
 from PySide6.QtCore import QPointF, QRectF, QSizeF, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QFontDatabase, QPainter, QPen, QPolygonF
 from PySide6.QtMultimediaWidgets import QGraphicsVideoItem
@@ -254,8 +256,11 @@ class VideoView(QGraphicsView):
             text.setFont(font)
             text.setBrush(QBrush(Qt.GlobalColor.white))
             br = text.boundingRect()
+            text.setTransformOriginPoint(br.width() / 2, br.height() / 2)   # co và xoay quanh TÂM dòng chữ
             text.setScale(k)
-            text.setPos(it.cx - br.width() * k / 2, it.line_center_y(j) - br.height() * k / 2)
+            text.setRotation(math.degrees(it.angle))                        # hộp nghiêng: chữ nghiêng cùng góc đa giác
+            lx, ly = it.line_center(j)
+            text.setPos(lx - br.width() / 2, ly - br.height() / 2)
             text.setZValue(z)
             self._add(text)
 

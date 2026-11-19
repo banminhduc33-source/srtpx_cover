@@ -28,6 +28,7 @@ from .geometry import (
     has_keyframe_polygon,
     pixel_box,
     polygon_bounds,
+    polygon_frame,
     video_box,
     video_polygon,
     visible_frame_range,
@@ -176,16 +177,18 @@ def build_filter_script(
         box_color = ("0x%02x%02x%02x" % box_rgb) if box_rgb else "black"
         boxes_vary = len({(kf.box.x1, kf.box.x2, kf.box.y1, kf.box.y2) for kf in sub.keyframes}) > 1
 
-        # --- phụ đề CÓ ĐA GIÁC (chữ gốc nghiêng): hộp đen vẽ theo đa giác, chữ trắng đặt theo hộp thẳng `box` (animlayer.py)
+        # --- phụ đề CÓ ĐA GIÁC (chữ gốc nghiêng): hộp đen vẽ theo đa giác, chữ trắng xoay theo góc đa giác và co vừa đa giác (animlayer.py)
         if sub.polygon is not None and not sub.keyframes:
             poly = video_polygon(sub, scale, options.margin, video.size)
             vb = video_box(sub, sub.start, scale, options.margin, video.size)
             if has_text:
                 choice, plan = plan_text(sub, chain, scale.sy)
                 choices[sub.index] = choice
-                if not plan.fits_at(vb.x2 - vb.x1, vb.y2 - vb.y1):
+                # chữ xoay theo góc đa giác và co vừa CHÍNH đa giác (hộp bao thẳng rộng hơn nhiều khi nghiêng nên chữ sẽ tràn ra ngoài)
+                fr = polygon_frame(poly)
+                if not plan.fits_at(fr.w, fr.h):
                     overflow.append(sub.index)
-                size = plan.size_for(vb.x2 - vb.x1, vb.y2 - vb.y1)
+                size = plan.size_for(fr.w, fr.h)
                 lines, font_path, face = plan.lines, str(choice.font.spec.path), choice.font.spec.face_index
             else:
                 size, lines, font_path, face = 1.0, (), "", 0
@@ -206,20 +209,23 @@ def build_filter_script(
                 choice, plan = plan_text(sub, chain, scale.sy)
                 choices[sub.index] = choice
                 for kf in sub.keyframes:
-                    kb = video_box(sub, kf.time, scale, options.margin, video.size)
-                    if not plan.fits_at(kb.x2 - kb.x1, kb.y2 - kb.y1) and sub.index not in overflow:
+                    kfr = polygon_frame(video_polygon(sub, scale, options.margin, video.size, kf.time))
+                    if not plan.fits_at(kfr.w, kfr.h) and sub.index not in overflow:
                         overflow.append(sub.index)
                 lines, font_path, face = plan.lines, str(choice.font.spec.path), choice.font.spec.face_index
             else:
                 plan, lines, font_path, face = None, (), "", 0
 
-            def geom_p(k: int, sub=sub, plan=plan):
-                vb = video_box(sub, frame_time(k, num, den), scale, options.margin, video.size, options.smooth)
-                return (vb.x1, vb.x2, vb.y1, vb.y2, plan.size_for(vb.x2 - vb.x1, vb.y2 - vb.y1) if plan else 1.0)
-
             def poly_p(k: int, sub=sub):
                 p = video_polygon(sub, scale, options.margin, video.size, frame_time(k, num, den), options.smooth)
                 return tuple(p) if p is not None else None
+
+            def geom_p(k: int, sub=sub, plan=plan):
+                vb = video_box(sub, frame_time(k, num, den), scale, options.margin, video.size, options.smooth)
+                pl = poly_p(k)
+                fr = polygon_frame(pl) if pl is not None else None   # chữ co vừa đa giác (xoay theo nó), không phải hộp bao thẳng
+                bw, bh = (fr.w, fr.h) if fr is not None else (vb.x2 - vb.x1, vb.y2 - vb.y1)
+                return (vb.x1, vb.x2, vb.y1, vb.y2, plan.size_for(bw, bh) if plan else 1.0)
 
             boxes_p = []
             for k in range(k0, k1 + 1):

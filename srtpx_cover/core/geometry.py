@@ -263,6 +263,35 @@ def polygon_bounds(pts: Sequence[tuple[float, float]]) -> tuple[float, float, fl
     return min(xs), max(xs), min(ys), max(ys)
 
 
+@dataclass(frozen=True)
+class PolygonFrame:
+    """Khung chữ của một đa giác 4 góc (thứ tự trái-trên, phải-trên, phải-dưới, trái-dưới): chữ đặt ở tâm, xoay theo `angle`."""
+
+    cx: float
+    cy: float
+    w: float        # độ dài cạnh ngang (trung bình cạnh trên và cạnh dưới)
+    h: float        # độ dài cạnh dọc (trung bình cạnh trái và cạnh phải)
+    angle: float    # radian, theo chiều kim đồng hồ trên màn hình (y hướng xuống), trong (-pi/2, pi/2]
+
+
+def polygon_frame(pts: Sequence[tuple[float, float]]) -> PolygonFrame:
+    """Tâm, cỡ và góc nghiêng của đa giác che: chữ nghiêng thì chữ trắng phải xoay cùng góc đó và co vừa CHÍNH đa giác (không phải
+    hộp bao thẳng, vốn rộng hơn nhiều khi nghiêng). Góc lấy từ hai cạnh ngang cộng lại, đưa về (-90, 90] độ để chữ không bị lộn ngược."""
+    (x0, y0), (x1, y1), (x2, y2), (x3, y3) = pts
+    dx, dy = (x1 - x0) + (x2 - x3), (y1 - y0) + (y2 - y3)
+    angle = math.atan2(dy, dx) if (dx or dy) else 0.0
+    if angle > math.pi / 2 + 1e-9:
+        angle -= math.pi
+    elif angle <= -math.pi / 2 + 1e-9:
+        angle += math.pi
+    return PolygonFrame(
+        (x0 + x1 + x2 + x3) / 4, (y0 + y1 + y2 + y3) / 4,
+        (math.hypot(x1 - x0, y1 - y0) + math.hypot(x2 - x3, y2 - y3)) / 2,
+        (math.hypot(x3 - x0, y3 - y0) + math.hypot(x2 - x1, y2 - y1)) / 2,
+        angle,
+    )
+
+
 # ---------------------------------------------------------------- Khung hình (mốc 2)
 
 def frame_time(k: int, fps_num: int, fps_den: int) -> float:
