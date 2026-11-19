@@ -52,6 +52,9 @@ Dòng lệnh: `python -m srtpx_cover.cli video.mp4 phude.srtpx ra.mp4 --dub --vo
 
 **Chạy tự động (GitHub Actions, `ci/process.sh`):** có secret `TIKTOK_SESSIONID` thì tự dùng `--both` và gửi **hai file** về `out/`: `<tên>_out_tts.mp4` và `<tên>_out_notts.mp4`. Không có secret thì vẫn một file `<tên>_out.mp4` như trước. Hộp thoại **Xuất** trong app chưa đổi (vẫn một video).
 
+## Chữ gốc bị lộ ở đầu/cuối câu: nới hộp che
+Hardsub gốc thường hiện sớm hơn và tắt muộn hơn mốc OCR vài khung, nên nếu hộp che chỉ vẽ đúng `[bắt đầu, kết thúc)` của khối thì chữ gốc lộ ra ở đầu và cuối câu. Khi xuất (CLI, giao diện, CI), hộp che được **nới thêm 3 khung ở mỗi đầu** (`DEFAULT_PAD_FRAMES` trong `core/export.py`); chữ mới vẫn hiện đúng giờ cũ. Dòng lệnh: `--pad-frames N` (0 = tắt). Còn lộ thì tăng lên 4–6; hộp chồng lên câu kế tiếp chỉ khác nhau về giờ nên không gây hại.
+
 ## Phụ đề chính (chuẩn hóa chữ và hộp khi xuất)
 Câu thoại dài bị co chữ cho vừa hộp gốc nên các phụ đề có cỡ chữ lớn nhỏ khác nhau (câu dài có thể chỉ còn vài px). Mặc định khi xuất, app (`core/maincap.py`):
 1. **Tìm phụ đề chính:** gom các phụ đề theo vị trí tâm hộp (dung sai 5% chiều rộng, 2,5% chiều cao khung hình, đủ để nuốt nhiễu OCR vài px) và lấy **nhóm đông nhất**; hòa thì nhóm có tổng thời lượng dài hơn, rồi nhóm nằm thấp hơn. Sau đó mọi hộp **nằm trọn trong vùng bao của nhóm** (hộp nhỏ nhất chứa mọi hộp của nhóm) cũng được tính là phụ đề chính, dù tâm lệch quá dung sai. Phần còn lại là **phụ đề phụ**, **giữ nguyên như cũ** (hộp, keyframe, co chữ theo hộp). Nhóm đông nhất dưới 2 dòng thì không áp dụng gì.
